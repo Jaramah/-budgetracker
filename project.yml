@@ -1,0 +1,38 @@
+name: BudgetTracker
+options:
+  bundleIdPrefix: com.yourname
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: "" # <- put your Apple Developer Team ID here when ready to sign
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  BudgetTracker:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - BudgetTracker
+    info:
+      path: BudgetTracker/Info.plist
+      properties:
+        CFBundleDisplayName: Budget
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        ITSAppUsesNonExemptEncryption: false
+        NSFaceIDUsageDescription: "Unlock the app to protect your financial data."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yourname.budgettracker
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1"
