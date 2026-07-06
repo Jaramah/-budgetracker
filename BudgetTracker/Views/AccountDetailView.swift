@@ -149,8 +149,10 @@ struct AccountDetailView: View {
     }
 
     private func deleteStatement(_ st: StatementImport) {
-        context.delete(st)
-        try? context.save()
+        // Delete the statement and reconcile the transactions it touched. See
+        // `StatementService.delete` for the invariant (created rows deleted, matched
+        // rows kept but un-reconciled). Kept in a service so it stays unit-tested.
+        StatementService.delete(st, transactions: transactions, context: context)
         Haptics.warning()
     }
 }

@@ -5,29 +5,56 @@ import SwiftData
 /// import) and Goals (savings goals). Matches the reference's Accounts screen.
 struct AccountsView: View {
     @Environment(\.modelContext) private var context
+    @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var store: ProStore
     @Query(sort: \CreditCardAccount.sortIndex) private var cards: [CreditCardAccount]
     @Query private var transactions: [Transaction]
     @Query(sort: \Goal.sortIndex) private var goals: [Goal]
 
-    @State private var tab = 0
     @State private var showAddCard = false
     @State private var showAddGoal = false
+    @State private var showPaywall = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    SegmentPills(options: ["Cards", "Goals"], selection: $tab)
-                    if tab == 0 { cardsTab } else { goalsTab }
+                    header
+                    SegmentPills(options: ["Cards", "Budget", "Goals"],
+                                 selection: $appState.accountsSegment)
+                    switch appState.accountsSegment {
+                    case 0: cardsTab
+                    case 1: BudgetView()
+                    default: goalsTab
+                    }
                     Color.clear.frame(height: 72)
                 }
                 .padding(.horizontal, 16)
             }
             .auroraBackground()
-            .navigationTitle("Accounts")
+            .navigationTitle("")
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showAddCard) { CardEditView(card: nil) }
             .sheet(isPresented: $showAddGoal) { GoalEditView(goal: nil) }
+            .sheet(isPresented: $showPaywall) {
+                PaywallView(reason: "You've added your free card. Unlock Pro to add unlimited cards and import statements from all of them.")
+            }
         }
+    }
+
+    /// Screen title with the month stepper on the trailing edge. The stepper only
+    /// appears on the Budget segment — Cards and Goals aren't month-scoped.
+    private var header: some View {
+        HStack(alignment: .center) {
+            Text("Accounts")
+                .font(.largeTitle.bold())
+                .foregroundStyle(DS.inkPrimary)
+            Spacer()
+            if appState.accountsSegment == 1 {
+                MonthStepper(month: $appState.selectedMonth)
+            }
+        }
+        .padding(.top, 8)
     }
 
     private func balance(_ card: CreditCardAccount) -> Int {
@@ -43,8 +70,15 @@ struct AccountsView: View {
                 }
                 .buttonStyle(.plain)
             }
-            Button { showAddCard = true } label: {
-                Label("Add Card", systemImage: "plus")
+            Button {
+                if store.canAddCard(currentCount: cards.count) {
+                    showAddCard = true
+                } else {
+                    showPaywall = true
+                }
+            } label: {
+                Label(store.canAddCard(currentCount: cards.count) ? "Add Card" : "Add Card — Pro",
+                      systemImage: store.canAddCard(currentCount: cards.count) ? "plus" : "lock.fill")
                     .font(.subheadline.weight(.medium))
                     .frame(maxWidth: .infinity).padding(.vertical, 14)
                     .background(DS.bgCard, in: RoundedRectangle(cornerRadius: DS.corner))

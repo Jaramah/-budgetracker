@@ -14,11 +14,10 @@ enum AutoCategorizer {
         (["fairprice", "ntuc", "cold storage", "giant", "sheng siong", "shengsiong", "redmart", "grocer", "market", "supermarket", "don don", "donki"], "Groceries"),
         (["mcdonald", "kfc", "burger", "starbucks", "coffee", "kopitiam", "restaurant", "cafe", "food", "dining", "eatery", "subway", "pizza", "din tai", "toast box", "ya kun", "deliveroo", "foodpanda", "chatime", "bubble tea"], "Food & Dining"),
         (["netflix", "spotify", "disney", "hbo", "youtube", "cinema", "golden village", "cathay", "shaw", "steam", "playstation", "xbox", "nintendo", "game", "concert", "ticket"], "Entertainment"),
-        (["amazon", "shopee", "lazada", "qoo10", "taobao", "uniqlo", "zara", "h&m", "shop", "store", "mall", "apple.com", "apple store", "ikea", "challenger", "courts", "best denki"], "Shopping"),
+        (["amazon", "shopee", "lazada", "qoo10", "taobao", "pinduoduo", "tiktok", "uniqlo", "zara", "h&m", "daiso", "shop", "store", "mall", "apple.com", "apple store", "ikea", "challenger", "courts", "best denki", "takashimaya", "isetan", "mustafa", "bhg", "robinsons", "harvey norman"], "Shopping"),
         (["singtel", "gomo", "starhub", "m1", "circles", "simba", "myrepublic", "sp group", "sp services", "utility", "electric", "water", "gas", "wifi", "broadband", "town council", "conservancy"], "Utilities"),
         (["clinic", "hospital", "pharmacy", "guardian", "watson", "unity", "dental", "doctor", "medical", "health", "polyclinic", "raffles medical"], "Health"),
-        (["rent", "mortgage", "hdb", "condo", "property", "landlord", "housing"], "Housing"),
-        (["salary", "payroll", "refund", "interest", "dividend", "cashback", "rebate", "payment received", "thank you"], "Income")
+        (["rent", "mortgage", "hdb", "condo", "property", "landlord", "housing"], "Housing")
     ]
 
     /// Pick the best-matching category for a description from the given list.

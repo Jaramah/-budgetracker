@@ -8,6 +8,7 @@ import SwiftData
 struct SettingsView: View {
     @Environment(\.modelContext) private var context
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var store: ProStore
 
     // Cards drive the notification rescheduling when reminder settings change.
     @Query(sort: \CreditCardAccount.sortIndex) private var cards: [CreditCardAccount]
@@ -27,6 +28,8 @@ struct SettingsView: View {
     @State private var shareURL: URL?
     @State private var showEraseConfirm = false
     @State private var eraseDoneMessage: String?
+    @State private var showPaywall = false
+    @State private var restoreMessage: String?
 
     private var currencyLabel: String {
         CurrencyOption.common.first { $0.code == currencyCode }?.label ?? currencyCode
@@ -36,6 +39,7 @@ struct SettingsView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 18) {
+                    proCard
                     generalCard
                     securityCard
                     notificationsCard
@@ -54,6 +58,8 @@ struct SettingsView: View {
             .toolbarBackground(DS.bgBase, for: .navigationBar)
         }
         .tint(DS.accent)
+        // Pro upgrade
+        .sheet(isPresented: $showPaywall) { PaywallView() }
         // Currency picker
         .sheet(isPresented: $showCurrencyPicker) {
             CurrencyPickerView(selected: $currencyCode)
@@ -82,6 +88,58 @@ struct SettingsView: View {
             Button("OK") { eraseDoneMessage = nil }
         } message: {
             Text(eraseDoneMessage ?? "")
+        }
+        .alert("Restore Purchases", isPresented: .constant(restoreMessage != nil)) {
+            Button("OK") { restoreMessage = nil }
+        } message: {
+            Text(restoreMessage ?? "")
+        }
+    }
+
+    // MARK: - Pro
+
+    @ViewBuilder
+    private var proCard: some View {
+        if store.isPro {
+            SettingsCard(title: "Budget Pro") {
+                HStack {
+                    SettingsLabel(icon: "crown.fill", tint: DS.accent,
+                                  title: "Pro unlocked",
+                                  subtitle: "Unlimited cards · No ads · Thank you!")
+                    Spacer()
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(DS.moneyIn)
+                }
+            }
+        } else {
+            SettingsCard(title: "Budget Pro") {
+                Button { showPaywall = true } label: {
+                    HStack {
+                        SettingsLabel(icon: "crown.fill", tint: DS.accent,
+                                      title: "Unlock Pro",
+                                      subtitle: "Unlimited cards and remove ads")
+                        Spacer()
+                        if !store.priceText.isEmpty {
+                            Text(store.priceText)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(DS.accentSoft)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(DS.inkTertiary)
+                    }
+                }
+                .buttonStyle(.plain)
+                Divider().overlay(DS.hairline)
+                SettingsRow(icon: "arrow.clockwise", tint: DS.accentSoft,
+                            title: "Restore Purchases", value: nil) {
+                    Task {
+                        let ok = await store.restore()
+                        restoreMessage = ok
+                            ? "Your Pro purchase has been restored."
+                            : "No previous purchase was found on this Apple ID."
+                    }
+                }
+            }
         }
     }
 

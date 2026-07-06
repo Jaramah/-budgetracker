@@ -5,9 +5,26 @@ import SwiftData
 /// Home · Activity · [+] · Budget · Accounts · Settings.
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var store: ProStore
     @State private var tab = 0
     @State private var showAdd = false
     @State private var showBills = false
+
+    /// For marketing captures: `UI_SCREEN` (launch env) opens the app directly on a
+    /// screen so each shot is a deterministic fresh launch, no in-app tapping. Absent
+    /// in normal use, so this is a no-op in shipped builds.
+    private static var launchScreen: String { ProcessInfo.processInfo.environment["UI_SCREEN"] ?? "" }
+
+    init() {
+        let initialTab: Int
+        switch RootView.launchScreen {
+        case "cards", "budget", "analytics": initialTab = 2
+        case "activity":                     initialTab = 1
+        case "settings":                     initialTab = 3
+        default:                             initialTab = 0
+        }
+        _tab = State(initialValue: initialTab)
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -17,20 +34,62 @@ struct RootView: View {
                 case 0: HomeView(
                             onSeeAllActivity: { tab = 1 },
                             onSeeBills: { showBills = true },
-                            onSeeCategories: { tab = 2 })
+                            onSeeCategories: { tab = 2; appState.accountsSegment = 1 })
                 case 1: ActivityView()
-                case 2: BudgetView()
-                case 3: AccountsView()
+                case 2: AccountsView()
                 default: SettingsView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            tabBar
+            VStack(spacing: 0) {
+                // Free users see a banner ad above the tab bar; Pro removes it.
+                if !store.isPro {
+                    AdBannerSlot()
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity)
+                        .background(DS.bgCard)
+                }
+                tabBar
+            }
         }
         .auroraBackground()
         .sheet(isPresented: $showAdd) { AddTransactionView() }
         .sheet(isPresented: $showBills) { BillsView() }
+        .onAppear {
+            switch RootView.launchScreen {
+            case "cards":               appState.accountsSegment = 0
+            case "budget", "analytics": appState.accountsSegment = 1
+            default: break
+            }
+        }
+        .task {
+            // Marketing capture: `UI_DEMO_TOUR=1` auto-drives the app through its
+            // screens for the App Preview recording. No-op in normal use.
+            guard ProcessInfo.processInfo.environment["UI_DEMO_TOUR"] == "1" else { return }
+            await runDemoTour()
+        }
+    }
+
+    /// Programmatic, deterministic screen tour for recording an App Preview.
+    private func runDemoTour() async {
+        func hold(_ seconds: Double) async { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
+        let steps: [(Int, Int)] = [
+            (0, 0),   // Home hero + donut
+            (2, 0),   // Cards wall
+            (2, 1),   // Budget (spending-by-category / budgets)
+            (1, 0),   // Activity list
+            (3, 0),   // Settings
+            (0, 0)    // back to Home
+        ]
+        await hold(3.0)
+        for (t, seg) in steps.dropFirst() {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                appState.accountsSegment = seg
+                tab = t
+            }
+            await hold(3.0)
+        }
     }
 
     private var tabBar: some View {
@@ -38,9 +97,8 @@ struct RootView: View {
             tabButton(0, "house.fill", "Home")
             tabButton(1, "list.bullet", "Activity")
             addButton
-            tabButton(2, "chart.pie.fill", "Budget")
-            tabButton(3, "creditcard.fill", "Cards")
-            tabButton(4, "gearshape.fill", "Settings")
+            tabButton(2, "creditcard.fill", "Cards")
+            tabButton(3, "gearshape.fill", "Settings")
         }
         .padding(.horizontal, 10)
         .padding(.top, 10)

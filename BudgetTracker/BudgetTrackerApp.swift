@@ -6,6 +6,7 @@ struct BudgetTrackerApp: App {
     let container: ModelContainer
     @StateObject private var appState = AppState()
     @StateObject private var lock = AppLock()
+    @StateObject private var store = ProStore()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -46,9 +47,15 @@ struct BudgetTrackerApp: App {
             ZStack {
                 RootView()
                     .environmentObject(appState)
+                    .environmentObject(store)
                     .task {
                         await SampleData.seedIfNeeded(container.mainContext)
+                        DemoSeed.seedIfNeeded(container.mainContext)   // no-op unless DEMO_SEED=1
                         RecurringMaterializer.run(context: container.mainContext)
+                    }
+                    .task {
+                        // Free users see ads; ask ATT + start the SDK once Pro state is known.
+                        await AdsBootstrap.start(isPro: store.isPro)
                     }
                 if lock.isLocked {
                     LockScreenView { lock.authenticate() }

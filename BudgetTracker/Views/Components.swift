@@ -153,3 +153,46 @@ struct SegmentPills: View {
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(DS.hairline, lineWidth: 1))
     }
 }
+
+// MARK: - Month stepper
+/// Compact ‹ Month YYYY › control. Screens are month-scoped (Home, Budget), and
+/// imported statements are usually for a *past* month — this lets the user page
+/// back to the month their spending is actually in. Forward is capped at the
+/// current month (there's never data in the future).
+struct MonthStepper: View {
+    @Binding var month: Date
+
+    private var atCurrentMonth: Bool {
+        DateHelpers.sameMonth(month, .now)
+    }
+
+    var body: some View {
+        HStack(spacing: 2) {
+            chevron("chevron.left", enabled: true) {
+                month = DateHelpers.addMonths(-1, to: month)
+            }
+            Text(DateHelpers.monthYearLabel(month))
+                .font(.subheadline.weight(.semibold)).monospacedDigit()
+                .foregroundStyle(DS.inkPrimary)
+                .frame(minWidth: 116)
+            chevron("chevron.right", enabled: !atCurrentMonth) {
+                month = DateHelpers.addMonths(1, to: month)
+            }
+        }
+        .padding(.horizontal, 6).padding(.vertical, 6)
+        .background(DS.bgCard, in: Capsule())
+        .overlay(Capsule().strokeBorder(DS.hairline, lineWidth: 1))
+    }
+
+    private func chevron(_ symbol: String, enabled: Bool, _ tap: @escaping () -> Void) -> some View {
+        Button(action: tap) {
+            Image(systemName: symbol)
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(enabled ? DS.inkSecondary : DS.inkTertiary.opacity(0.4))
+                .frame(width: 30, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+}

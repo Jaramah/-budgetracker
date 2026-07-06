@@ -21,10 +21,21 @@ enum CoordinateStatementParser {
 
     // MARK: Regex
     private static let reDateNum  = try! NSRegularExpression(pattern: #"^\d{1,2}$"#)
-    private static let reMonAbbr  = try! NSRegularExpression(pattern: #"^[A-Za-z]{2,3}$"#)  // 2-3 letters (handles truncated "Ju", "Ma")
+    // A month candidate is any short-ish run of letters; it is only *accepted* as
+    // part of a date once `StatementParser.parseDate` confirms "<day> <token>"
+    // actually parses (see `leadingDates`). This stops descriptions that begin
+    // "16 EW ..." / "5 PM ..." from being misread as a "16 May"-style date.
+    private static let reMonAbbr  = try! NSRegularExpression(pattern: #"^[A-Za-z]{2,9}$"#)
     private static let reDateSlash = try! NSRegularExpression(pattern: #"^\d{1,2}/\d{1,2}(/\d{2,4})?$"#)
     private static let reAmount   = try! NSRegularExpression(
         pattern: #"^\(?[+\-]?[\d,]+\.\d{2}(CR|DR)?\)?$"#, options: [.caseInsensitive])
+
+    /// Set true only while tuning against a new bank layout. Kept false for release
+    /// so statement contents (merchants, amounts) never leak into device logs.
+    private static let verbose = false
+    private static func dbg(_ message: @autoclosure () -> String) {
+        if verbose { print(message()) }
+    }
 
     private static let noise = [
         "previous balance", "new balance", "total outstanding", "balance from previous",
@@ -56,25 +67,26 @@ enum CoordinateStatementParser {
         var out: [StatementParser.ParsedLine] = []
         var skipping = false
 
-        print("🔍 CoordinateParser: parsing \(doc.pageCount) page(s)")
+        dbg("🔍 CoordinateParser: parsing \(doc.pageCount) page(s)")
 
         for p in 0..<doc.pageCount {
             guard let page = doc.page(at: p) else { continue }
             let allWords = words(on: page)
-            print("📄 Page \(p+1): \(allWords.count) words extracted")
+            dbg("📄 Page \(p+1): \(allWords.count) words extracted")
             let rows = groupRows(words: allWords)
-            print("📊 Page \(p+1): grouped into \(rows.count) rows")
+            dbg("📊 Page \(p+1): grouped into \(rows.count) rows")
+            for (ri, row) in rows.enumerated() { dbg("   ROW \(ri) y=\(String(format: "%.1f", row.first?.yMid ?? 0)): " + row.map { "[\(String(format: "%.0f", $0.x0))-\(String(format: "%.0f", $0.x1)) '\($0.text)']" }.joined(separator: " ")) }
             var anchors: [Anchor] = []
             var textRows: [(y: CGFloat, x0: CGFloat, x1: CGFloat, text: String)] = []
 
             for (rowIdx, row) in rows.enumerated() {
                 let low = row.map { $0.text }.joined(separator: " ").lowercased()
                 if resumeZone.contains(where: { low.contains($0) }) {
-                    print("▶️  Row \(rowIdx): RESUME zone detected: \(low.prefix(60))")
+                    dbg("▶️  Row \(rowIdx): RESUME zone detected: \(low.prefix(60))")
                     skipping = false
                 }
                 if stopZone.contains(where: { low.contains($0) }) {
-                    print("⏸️  Row \(rowIdx): STOP zone detected: \(low.prefix(60))")
+                    dbg("⏸️  Row \(rowIdx): STOP zone detected: \(low.prefix(60))")
                     skipping = true
                 }
                 if skipping { continue }
@@ -93,6 +105,15 @@ enum CoordinateStatementParser {
                     }
                 }
 
+                // Standalone trailing "CR" token (DBS prints "1,884.04 CR" as two
+                // words, so `parseAmount` above only sees the positive number). Treat
+                // the row as a credit/payment and drop it — we only import debits.
+                // ("DR" is a debit and is intentionally left as-is.)
+                if let ai = amtIndex,
+                   row[(ai + 1)...].contains(where: { $0.text.uppercased() == "CR" }) {
+                    amt = nil; amtIndex = nil
+                }
+
                 // If we found an amount but no leading dates, try trailing dates
                 // (Standard Chartered layout: DESC AMOUNT DATE DATE)
                 var finalDates = leadDates
@@ -105,14 +126,14 @@ enum CoordinateStatementParser {
                         finalDates = trailDates
                         descStart = consumed
                         descEnd = ai
-                        print("🔄 Row \(rowIdx): found trailing dates after amount")
+                        dbg("🔄 Row \(rowIdx): found trailing dates after amount")
                     }
                 }
 
                 if let firstDate = finalDates.first, let amount = amt, let ai = amtIndex {
                     let descWords = Array(row[descStart..<descEnd])
                     let desc = descWords.map { $0.text }.joined(separator: " ")
-                    print("✅ Row \(rowIdx): ANCHOR found — date=\(firstDate.text) amt=\(amount) desc=\(desc.prefix(40))")
+                    dbg("✅ Row \(rowIdx): ANCHOR found — date=\(firstDate.text) amt=\(amount) desc=\(desc.prefix(40))")
                     anchors.append(Anchor(
                         y: row[0].yMid,
                         date: firstDate.text,
@@ -131,18 +152,18 @@ enum CoordinateStatementParser {
                 } else {
                     // Debug: row had date or amount but not both
                     if !finalDates.isEmpty || amt != nil {
-                        print("⚠️  Row \(rowIdx): partial match — dates=\(finalDates.count) amt=\(amt != nil ? "YES" : "NO") consumed=\(consumed) rowLen=\(row.count)")
-                        print("    Text: \(row.map { $0.text }.joined(separator: " ").prefix(80))")
+                        dbg("⚠️  Row \(rowIdx): partial match — dates=\(finalDates.count) amt=\(amt != nil ? "YES" : "NO") consumed=\(consumed) rowLen=\(row.count)")
+                        dbg("    Text: \(row.map { $0.text }.joined(separator: " ").prefix(80))")
                     }
                 }
             }
 
             if anchors.isEmpty {
-                print("⚠️  Page \(p+1): NO anchors found (no rows with date+amount)")
+                dbg("⚠️  Page \(p+1): NO anchors found (no rows with date+amount)")
                 continue
             }
 
-            print("📌 Page \(p+1): \(anchors.count) anchor(s) found, attaching description fragments...")
+            dbg("📌 Page \(p+1): \(anchors.count) anchor(s) found, attaching description fragments...")
             // Description column band (per page).
             let dateX = anchors.map { $0.dateMaxX }.max() ?? 0
             let amtX  = anchors.map { $0.amountX }.min() ?? .greatestFiniteMagnitude
@@ -166,17 +187,20 @@ enum CoordinateStatementParser {
                 // Transaction Services" shouldn't be filtered just because it contains "new"
                 // or "transaction". Full-phrase match prevents false positives.
                 if !desc.isEmpty, noise.contains(where: { dlow == $0 || dlow.hasPrefix($0 + " ") || dlow.hasSuffix(" " + $0) }) {
-                    print("🗑️  Dropping noise row: \(desc.prefix(50))")
+                    dbg("🗑️  Dropping noise row: \(desc.prefix(50))")
                     continue
                 }
                 if desc.isEmpty { desc = "Transaction" }
-                let date = StatementParser.parseDate(a.date) ?? Date()
-                print("💾 EMIT: \(a.date) | \(desc.prefix(30)) | \(a.amount)¢")
+                // If the date token doesn't actually parse, flag the row for review
+                // instead of silently stamping it with today's date.
+                let parsedDate = StatementParser.parseDate(a.date)
+                let date = parsedDate ?? Date()
+                dbg("💾 EMIT: \(a.date) | \(desc.prefix(30)) | \(a.amount)¢")
                 out.append(StatementParser.ParsedLine(
-                    date: date, desc: desc, amountCents: a.amount, lowConfidence: false))
+                    date: date, desc: desc, amountCents: a.amount, lowConfidence: parsedDate == nil))
             }
         }
-        print("✅ CoordinateParser: DONE, returning \(out.count) transaction(s)")
+        dbg("✅ CoordinateParser: DONE, returning \(out.count) transaction(s)")
         return out
     }
 
@@ -216,9 +240,14 @@ enum CoordinateStatementParser {
                 flush()
                 continue
             }
+            // Some PDFs (e.g. Standard Chartered's) return a null/empty rect for
+            // certain glyphs. We must NOT drop the character — doing so corrupts the
+            // text ("300.88" -> "30.88", "Transaction" -> "Tansacion"). Keep the
+            // scalar in the word; just skip its (missing) geometry. As long as at
+            // least one glyph in the word has valid bounds, the word is still placed.
             let b = page.characterBounds(at: i)
-            if b.isNull || b.isInfinite || b.width == 0 || b.height == 0 { continue }
-            rect = (rect == nil) ? b : rect!.union(b)
+            let badBounds = b.isNull || b.isInfinite || b.width == 0 || b.height == 0
+            if !badBounds { rect = (rect == nil) ? b : rect!.union(b) }
             if let s = scalar { cur.unicodeScalars.append(s) }
         }
         flush()
@@ -274,7 +303,8 @@ enum CoordinateStatementParser {
             if matches(reDateSlash, t) {
                 dates.append(row[i]); i += 1
             } else if i + 1 < row.count,
-                      matches(reDateNum, t), matches(reMonAbbr, row[i + 1].text) {
+                      matches(reDateNum, t), matches(reMonAbbr, row[i + 1].text),
+                      StatementParser.parseDate(t + " " + row[i + 1].text) != nil {
                 let merged = Word(text: t + " " + row[i + 1].text,
                                   x0: row[i].x0, x1: row[i + 1].x1, yMid: row[i].yMid)
                 dates.append(merged); i += 2

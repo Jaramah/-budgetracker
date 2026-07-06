@@ -1,13 +1,21 @@
 import SwiftUI
 import SwiftData
 
-/// Budget screen with two tabs: Categories (budget-vs-actual per category) and
-/// Analytics (by-category breakdown + by-week bars + summary stats).
+/// Budget section with two sub-tabs: Categories (budget-vs-actual per category)
+/// and Analytics (by-category breakdown + by-week bars + summary stats).
+///
+/// Embedded inside the Cards tab (see `AccountsView`), so it provides only its
+/// content — the host screen owns the NavigationStack, ScrollView and title.
 struct BudgetView: View {
     @EnvironmentObject private var appState: AppState
     @Query private var transactions: [Transaction]
     @Query(sort: \Category.sortIndex) private var categories: [Category]
     @State private var tab = 0
+
+    init() {
+        // Marketing capture: open straight to the Analytics sub-tab when asked.
+        _tab = State(initialValue: ProcessInfo.processInfo.environment["UI_SCREEN"] == "analytics" ? 1 : 0)
+    }
 
     private var month: Date { appState.selectedMonth }
     private var monthTx: [Transaction] {
@@ -17,17 +25,9 @@ struct BudgetView: View {
     private var budgetCents: Int { categories.reduce(0) { $0 + $1.monthlyBudgetCents } }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    SegmentPills(options: ["Categories", "Analytics"], selection: $tab)
-                    if tab == 0 { categoriesTab } else { analyticsTab }
-                    Color.clear.frame(height: 72)
-                }
-                .padding(.horizontal, 16)
-            }
-            .auroraBackground()
-            .navigationTitle("Budget")
+        VStack(spacing: 16) {
+            SegmentPills(options: ["Categories", "Analytics"], selection: $tab)
+            if tab == 0 { categoriesTab } else { analyticsTab }
         }
     }
 
@@ -91,6 +91,16 @@ struct BudgetView: View {
         return out.sorted { $0.1 > $1.1 }
     }
 
+    /// Spend not tagged to any category, so the donut represents the full total.
+    private var uncategorizedCents: Int {
+        max(0, spentCents - byCategory.reduce(0) { $0 + $1.cents })
+    }
+    private var donutSlices: [(color: Color, value: Int)] {
+        var slices: [(color: Color, value: Int)] = byCategory.map { ($0.color, $0.cents) }
+        if uncategorizedCents > 0 { slices.append((DS.inkTertiary.opacity(0.5), uncategorizedCents)) }
+        return slices
+    }
+
     private var byWeek: [(label: String, cents: Int)] {
         let cal = DateHelpers.calendar
         var buckets = [Int: Int]()
@@ -114,19 +124,17 @@ struct BudgetView: View {
                 VStack(spacing: 14) {
                     SectionHeader(title: "By category")
                     HStack(spacing: 16) {
-                        CategoryDonut(slices: byCategory.map { ($0.color, $0.cents) },
+                        CategoryDonut(slices: donutSlices,
                                       lineWidth: 16, centerTop: "Total",
                                       centerBottom: Money.string(spentCents))
                             .frame(width: 120, height: 120)
                         VStack(spacing: 8) {
                             ForEach(byCategory.prefix(5), id: \.cat.id) { it in
-                                HStack(spacing: 8) {
-                                    Circle().fill(it.color).frame(width: 8, height: 8)
-                                    Text(it.cat.name).font(.caption).foregroundStyle(DS.inkSecondary).lineLimit(1)
-                                    Spacer()
-                                    Text("\(Int(Double(it.cents)/Double(max(1,spentCents))*100))%")
-                                        .font(.caption.weight(.medium)).foregroundStyle(DS.inkPrimary)
-                                }
+                                legendRow(color: it.color, name: it.cat.name, cents: it.cents)
+                            }
+                            if uncategorizedCents > 0 {
+                                legendRow(color: DS.inkTertiary.opacity(0.5),
+                                          name: "Uncategorized", cents: uncategorizedCents)
                             }
                         }
                     }
@@ -140,6 +148,16 @@ struct BudgetView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func legendRow(color: Color, name: String, cents: Int) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(name).font(.caption).foregroundStyle(DS.inkSecondary).lineLimit(1)
+            Spacer()
+            Text("\(Int(Double(cents)/Double(max(1, spentCents))*100))%")
+                .font(.caption.weight(.medium)).foregroundStyle(DS.inkPrimary)
         }
     }
 

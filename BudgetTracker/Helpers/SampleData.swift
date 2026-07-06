@@ -19,8 +19,7 @@ enum SampleData {
             ("Utilities",     "bolt.fill",             "#FFD60A", 15000),
             ("Shopping",      "bag.fill",              "#FF375F", 30000),
             ("Entertainment", "film.fill",             "#BF5AF2", 15000),
-            ("Health",        "cross.case.fill",       "#FF6B6B", 0),
-            ("Income",        "dollarsign.circle.fill","#30D158", 0)
+            ("Health",        "cross.case.fill",       "#FF6B6B", 0)
         ]
 
         for (i, item) in defaults.enumerated() {

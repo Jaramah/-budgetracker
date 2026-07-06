@@ -59,19 +59,45 @@ enum StatementParser {
             if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 throw ParseError.noTextInPDF
             }
-            // Primary: coordinate-based parser — rebuilds the visual table layout so
-            // multi-column banks (StanChart) and wrapped descriptions (Trust) work.
+            // Two complementary strategies — run both and keep the better result:
+            //  • Coordinate parser rebuilds the visual table from glyph positions
+            //    (needed when the text layer is column-scrambled).
+            //  • Line parser reads the ordered text layer (better for the many banks
+            //    whose PDF text is already clean, e.g. DBS/UOB/Trust).
+            // Neither wins universally, so score each and pick the stronger.
             let coord = CoordinateStatementParser.parse(url: url)
-            if !coord.isEmpty { return coord }
-            // Fallback 1: legacy line-based parser (handles simple single-line layouts).
             let lines = LineStatementParser.parse(url: url)
-            if !lines.isEmpty { return lines }
-            // Fallback 2: naive single-line text scan for unusual layouts.
+            // Third strategy: the "trailing amount block" layout (UOB), where amounts
+            // are batched after the transactions rather than inline. Returns [] unless
+            // that layout is detected, so it only wins for statements shaped that way.
+            let block = LineStatementParser.parseBlock(url: url)
+            // Prefer the line parser on ties (it's the clean-text default); coord and
+            // block only win when they strictly score higher.
+            var best = lines
+            if score(coord) > score(best) { best = coord }
+            if score(block) > score(best) { best = block }
+            if !best.isEmpty { return best }
+            // Fallback: naive single-line text scan for unusual layouts.
             let fallback = parsePDFText(text)
             if fallback.isEmpty { throw ParseError.nothingFound }
             return fallback
         default:
             throw ParseError.unsupported
+        }
+    }
+
+    /// Quality score for a parse result. Rewards rows with a real merchant name and
+    /// *penalises* rows whose "description" is just digits — a bare year, a card-number
+    /// fragment ("5240 4030 0103"), etc. Those are the tell-tale of a column-scrambled
+    /// coordinate parse, so this lets `parse` reject a parser that recovered *more* rows
+    /// but only garbage in favour of the one that recovered fewer, usable ones.
+    private static func score(_ lines: [ParsedLine]) -> Int {
+        lines.reduce(0) { acc, l in
+            let d = l.desc.trimmingCharacters(in: .whitespaces)
+            if d == "Transaction" || d.isEmpty { return acc }            // placeholder: neutral
+            // A real name has a run of ≥3 consecutive letters; digit-soup doesn't.
+            let hasWord = d.range(of: #"\p{L}{3,}"#, options: .regularExpression) != nil
+            return acc + (hasWord ? 2 : -1)
         }
     }
 
@@ -206,28 +232,53 @@ enum StatementParser {
 
     /// Parse a date in several common statement formats.
     static func parseDate(_ s: String) -> Date? {
-        let t = s.trimmingCharacters(in: .whitespaces)
+        let raw = s.trimmingCharacters(in: .whitespaces)
+        // DateFormatter month symbols are case-sensitive, but banks print months in
+        // any case — Standard Chartered/HSBC often use UPPERCASE ("16 MAY"). Try the
+        // string as-is and a title-cased variant so all casings parse.
+        var candidates = [raw]
+        let titled = titleCasedWords(raw)
+        if titled != raw { candidates.append(titled) }
+
         let formats = [
             "dd/MM/yyyy", "MM/dd/yyyy", "yyyy-MM-dd", "dd-MM-yyyy",
             "dd/MM/yy", "MM/dd/yy", "dd MMM yyyy", "dd MMM", "MMM dd, yyyy",
-            "dd.MM.yyyy", "d/M/yyyy", "d MMM yyyy", "dd/MM", "d/M"
+            "dd.MM.yyyy", "d/M/yyyy", "d MMM yyyy", "dd/MM", "d/M",
+            "dd MMMM yyyy", "d MMMM yyyy", "dd MMMM", "d MMMM"   // full month names
         ]
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX")
         for f in formats {
             df.dateFormat = f
-            if let d = df.date(from: t) {
+            for t in candidates {
+                guard let d = df.date(from: t) else { continue }
                 // Formats without a year default to 2000; roll forward to this year.
                 if !f.contains("yy") {
                     let cal = Calendar.current
                     let now = Date()
                     var comps = cal.dateComponents([.day, .month], from: d)
                     comps.year = cal.component(.year, from: now)
-                    return cal.date(from: comps) ?? d
+                    let candidate = cal.date(from: comps) ?? d
+                    // A year-less date that lands in the future belongs to last year
+                    // (e.g. a December statement imported the following January).
+                    if candidate > now {
+                        comps.year = cal.component(.year, from: now) - 1
+                        return cal.date(from: comps) ?? candidate
+                    }
+                    return candidate
                 }
                 return d
             }
         }
         return nil
+    }
+
+    /// Title-case each alphabetic word ("MAY" -> "May"), leaving numeric tokens
+    /// untouched — used so case-variant month names parse.
+    private static func titleCasedWords(_ s: String) -> String {
+        s.split(separator: " ").map { word -> String in
+            guard word.contains(where: { $0.isLetter }) else { return String(word) }
+            return word.prefix(1).uppercased() + word.dropFirst().lowercased()
+        }.joined(separator: " ")
     }
 }

@@ -6,7 +6,6 @@ import SwiftData
 /// spending-by-category donut, upcoming bills, and recent activity.
 struct HomeView: View {
     @Environment(\.modelContext) private var context
-    @EnvironmentObject private var appState: AppState
 
     @Query private var transactions: [Transaction]
     @Query(sort: \Category.sortIndex) private var categories: [Category]
@@ -16,16 +15,15 @@ struct HomeView: View {
     var onSeeBills: (() -> Void)? = nil
     var onSeeCategories: (() -> Void)? = nil
 
-    private var month: Date { appState.selectedMonth }
+    /// Home always reports the **current** month — it's the "how am I doing right
+    /// now" screen. Browsing past months lives in the Accounts ▸ Budget tab.
+    private var month: Date { .now }
 
     private var monthTx: [Transaction] {
         transactions.filter { DateHelpers.sameMonth($0.date, month) }
     }
     private var spentCents: Int {
         monthTx.filter { $0.isExpense }.reduce(0) { $0 + $1.amountCents }
-    }
-    private var incomeCents: Int {
-        monthTx.filter { !$0.isExpense }.reduce(0) { $0 + $1.amountCents }
     }
     private var budgetCents: Int {
         categories.reduce(0) { $0 + $1.monthlyBudgetCents }
@@ -49,6 +47,20 @@ struct HomeView: View {
         return out.sorted { $0.1 > $1.1 }
     }
 
+    /// Spend not attributed to any category, so the donut can account for the full
+    /// "Spent" figure instead of only the tagged slices (which otherwise makes the
+    /// ring look complete while representing a fraction of the total).
+    private var uncategorizedCents: Int {
+        max(0, spentCents - categorySpend.reduce(0) { $0 + $1.cents })
+    }
+
+    /// Donut slices = each category's spend, plus a muted "Uncategorized" remainder.
+    private var donutSlices: [(color: Color, value: Int)] {
+        var slices: [(color: Color, value: Int)] = categorySpend.map { ($0.color, $0.cents) }
+        if uncategorizedCents > 0 { slices.append((DS.inkTertiary.opacity(0.5), uncategorizedCents)) }
+        return slices
+    }
+
     private var upcomingBills: [Bill] {
         bills.filter { !$0.isPaid(in: .now) }
             .sorted { $0.nextDueDate() < $1.nextDueDate() }
@@ -65,8 +77,8 @@ struct HomeView: View {
                 VStack(spacing: 16) {
                     greeting
                     availableCard
-                    if !categorySpend.isEmpty { categoryCard }
-                    if !upcomingBills.isEmpty { billsCard }
+                    categoryCard
+                    billsCard
                     recentCard
                     Color.clear.frame(height: 72) // space for tab bar
                 }
@@ -122,10 +134,7 @@ struct HomeView: View {
                         .font(.caption).foregroundStyle(DS.inkTertiary)
                 }
 
-                HStack(spacing: 12) {
-                    miniTile("Income", incomeCents, DS.moneyIn, "arrow.down.left")
-                    miniTile("Spent", spentCents, DS.moneyOut, "arrow.up.right")
-                }
+                miniTile("Spent", spentCents, DS.moneyOut, "arrow.up.right")
             }
         }
     }
@@ -146,36 +155,73 @@ struct HomeView: View {
     }
 
     // MARK: Category card
+    @ViewBuilder
     private var categoryCard: some View {
         AuroraCard {
             VStack(spacing: 14) {
                 SectionHeader(title: "Spending by category",
                               actionLabel: "See all", action: onSeeCategories)
-                HStack(spacing: 16) {
-                    CategoryDonut(
-                        slices: categorySpend.map { ($0.color, $0.cents) },
-                        lineWidth: 16,
-                        centerTop: "Spent",
-                        centerBottom: Money.string(spentCents)
-                    )
-                    .frame(width: 120, height: 120)
-
-                    VStack(spacing: 10) {
-                        ForEach(categorySpend.prefix(4), id: \.cat.id) { item in
-                            HStack(spacing: 8) {
-                                Circle().fill(item.color).frame(width: 8, height: 8)
-                                Text(item.cat.name)
-                                    .font(.caption).foregroundStyle(DS.inkSecondary)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text(Money.string(item.cents))
-                                    .font(.caption.weight(.medium)).monospacedDigit()
-                                    .foregroundStyle(DS.inkPrimary)
-                            }
-                        }
-                    }
+                if categorySpend.isEmpty {
+                    categoryEmptyState
+                } else {
+                    categoryContent
                 }
             }
+        }
+    }
+
+    /// Shown when the selected month has no categorized spend — distinguishes "nothing
+    /// this month" from "spending exists but isn't tagged to a category yet".
+    @ViewBuilder
+    private var categoryEmptyState: some View {
+        let hasSpend = spentCents > 0
+        HStack(spacing: 12) {
+            IconChip(symbol: hasSpend ? "tag" : "chart.pie",
+                     tint: DS.inkTertiary, size: 38)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(hasSpend ? "Spending not categorized"
+                              : "No spending in \(DateHelpers.monthYearLabel(month))")
+                    .font(.subheadline.weight(.medium)).foregroundStyle(DS.inkPrimary)
+                Text(hasSpend ? "Tag transactions in Activity to see the breakdown."
+                              : "Browse other months in the Budget tab.")
+                    .font(.caption).foregroundStyle(DS.inkTertiary)
+            }
+            Spacer()
+        }
+    }
+
+    private var categoryContent: some View {
+        HStack(spacing: 16) {
+            CategoryDonut(
+                slices: donutSlices,
+                lineWidth: 16,
+                centerTop: "Spent",
+                centerBottom: Money.string(spentCents)
+            )
+            .frame(width: 120, height: 120)
+
+            VStack(spacing: 10) {
+                ForEach(categorySpend.prefix(4), id: \.cat.id) { item in
+                    legendRow(color: item.color, name: item.cat.name, cents: item.cents)
+                }
+                if uncategorizedCents > 0 {
+                    legendRow(color: DS.inkTertiary.opacity(0.5),
+                              name: "Uncategorized", cents: uncategorizedCents)
+                }
+            }
+        }
+    }
+
+    private func legendRow(color: Color, name: String, cents: Int) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(name)
+                .font(.caption).foregroundStyle(DS.inkSecondary)
+                .lineLimit(1)
+            Spacer()
+            Text(Money.string(cents))
+                .font(.caption.weight(.medium)).monospacedDigit()
+                .foregroundStyle(DS.inkPrimary)
         }
     }
 
@@ -185,22 +231,45 @@ struct HomeView: View {
             VStack(spacing: 12) {
                 SectionHeader(title: "Upcoming bills",
                               actionLabel: "See all", action: onSeeBills)
-                ForEach(upcomingBills) { bill in
-                    HStack(spacing: 12) {
-                        IconChip(symbol: bill.symbol, tint: DS.accent, size: 38)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(bill.name).font(.subheadline.weight(.medium))
+                if upcomingBills.isEmpty {
+                    billsEmptyState
+                } else {
+                    ForEach(upcomingBills) { bill in
+                        HStack(spacing: 12) {
+                            IconChip(symbol: bill.symbol, tint: DS.accent, size: 38)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(bill.name).font(.subheadline.weight(.medium))
+                                    .foregroundStyle(DS.inkPrimary)
+                                Text("Due \(DateHelpers.mediumDate(bill.nextDueDate()))")
+                                    .font(.caption).foregroundStyle(DS.inkTertiary)
+                            }
+                            Spacer()
+                            Text(Money.string(bill.amountCents))
+                                .font(.subheadline.weight(.semibold)).monospacedDigit()
                                 .foregroundStyle(DS.inkPrimary)
-                            Text("Due \(DateHelpers.mediumDate(bill.nextDueDate()))")
-                                .font(.caption).foregroundStyle(DS.inkTertiary)
                         }
-                        Spacer()
-                        Text(Money.string(bill.amountCents))
-                            .font(.subheadline.weight(.semibold)).monospacedDigit()
-                            .foregroundStyle(DS.inkPrimary)
                     }
                 }
             }
+        }
+    }
+
+    /// Shown when nothing is due: distinguishes "everything's paid" (there are bills,
+    /// all settled) from "you haven't added any bills yet".
+    @ViewBuilder
+    private var billsEmptyState: some View {
+        let allPaid = !bills.isEmpty
+        HStack(spacing: 12) {
+            IconChip(symbol: allPaid ? "checkmark.circle.fill" : "calendar",
+                     tint: allPaid ? DS.moneyIn : DS.inkTertiary, size: 38)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(allPaid ? "All bills paid" : "No upcoming bills")
+                    .font(.subheadline.weight(.medium)).foregroundStyle(DS.inkPrimary)
+                Text(allPaid ? "You're all caught up this month."
+                             : "Add bills to track due dates here.")
+                    .font(.caption).foregroundStyle(DS.inkTertiary)
+            }
+            Spacer()
         }
     }
 

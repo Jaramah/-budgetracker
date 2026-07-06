@@ -48,6 +48,29 @@ The app includes a coordinate-based PDF parser that rebuilds the visual table la
 
 See `CoordinateStatementParser.swift` and `LineStatementParser.swift` for implementation details.
 
+### Tests
+
+Unit tests live in `BudgetTrackerTests/` and cover the deterministic parsing logic
+(`parseDate`, `parseAmount`, and the line-based parser's credit-exclusion / noise
+handling). Run them with:
+
+```bash
+xcodebuild -project BudgetTracker.xcodeproj -scheme BudgetTracker \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
+The primary **coordinate** parser depends on PDFKit's per-glyph `characterBounds`,
+which synthetic (renderer-generated) PDFs don't reproduce faithfully — so it's
+validated against **real** bank statements using this manual checklist:
+
+- [ ] DBS statement — charges imported, `… CR` payments/credits excluded
+- [ ] OCBC statement — `(123.45)` parenthesised credits excluded
+- [ ] UOB / Standard Chartered — trailing-date layout (`DESC AMOUNT DATE DATE`) parsed
+- [ ] Trust statement — wrapped merchant names joined into one description
+- [ ] Any statement — dates land in the correct month/year; rows that fail to parse
+      a date show the orange ⚠️ "needs a quick check" flag rather than today's date
+- [ ] Totals on the Review screen match the statement's "new transactions" subtotal
+
 ## Project Structure
 
 ```

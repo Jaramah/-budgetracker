@@ -12,7 +12,6 @@ struct AddTransactionView: View {
 
     @State private var amountText = ""
     @State private var note = ""
-    @State private var isExpense = true
     @State private var date = Date()
     @State private var categoryID: UUID?
     @State private var method: PaymentMethod = .cash
@@ -32,21 +31,14 @@ struct AddTransactionView: View {
                             .monospacedDigit()
                             .keyboardType(.decimalPad)
                     }
-                    Picker("Type", selection: $isExpense) {
-                        Text("Expense").tag(true)
-                        Text("Income").tag(false)
-                    }
-                    .pickerStyle(.segmented)
                 } header: { Text("Amount") }
 
                 Section {
                     TextField("Description", text: $note)
-                    if isExpense {
-                        Picker("Category", selection: $categoryID) {
-                            Text("Uncategorized").tag(UUID?.none)
-                            ForEach(categories) { c in
-                                Text(c.name).tag(UUID?.some(c.id))
-                            }
+                    Picker("Category", selection: $categoryID) {
+                        Text("Uncategorized").tag(UUID?.none)
+                        ForEach(categories) { c in
+                            Text(c.name).tag(UUID?.some(c.id))
                         }
                     }
                     DatePicker("Date", selection: $date, displayedComponents: .date)
@@ -94,7 +86,6 @@ struct AddTransactionView: View {
         guard let tx = existing else { return }
         amountText = String(format: "%.2f", Double(tx.amountCents) / 100)
         note = tx.note
-        isExpense = tx.isExpense
         date = tx.date
         categoryID = tx.category?.id
         method = tx.paymentMethod
@@ -107,16 +98,16 @@ struct AddTransactionView: View {
         if let tx = existing {
             tx.amountCents = abs(cents)
             tx.note = note
-            tx.isExpense = isExpense
+            tx.isExpense = true
             tx.date = date
-            tx.category = isExpense ? cat : nil
+            tx.category = cat
             tx.paymentMethod = method
             tx.cardID = method == .credit ? cardID : nil
             tx.updatedAt = .now
         } else {
             let tx = Transaction(
-                amountCents: abs(cents), isExpense: isExpense, note: note, date: date,
-                category: isExpense ? cat : nil, paymentMethod: method,
+                amountCents: abs(cents), isExpense: true, note: note, date: date,
+                category: cat, paymentMethod: method,
                 cardID: method == .credit ? cardID : nil)
             context.insert(tx)
         }

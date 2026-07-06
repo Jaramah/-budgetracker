@@ -1,0 +1,35 @@
+{
+  "identifier" : "B0A1F2C3-0001-4A2B-9C3D-BUDGETPRO0001",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "3.98",
+      "familyShareable" : false,
+      "internalID" : "B0A1F2C3-0002-4A2B-9C3D-BUDGETPRO0002",
+      "localizations" : [
+        {
+          "description" : "Unlock unlimited cards and remove ads — a one-time purchase.",
+          "displayName" : "Budget Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.github.jaramah.BudgetTracker.pro",
+      "referenceName" : "Budget Pro",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "0",
+    "_developerTeamID" : "V5LHDBRQYB",
+    "_failTransactionsEnabled" : false,
+    "_lastSynchronizedDate" : 0,
+    "_locale" : "en_US",
+    "_storefront" : "SGP",
+    "_storeKitErrors" : []
+  },
+  "subscriptionGroups" : [],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}
