@@ -94,7 +94,8 @@ PRIVATE BY DESIGN
 
 FREE, WITH AN OPTIONAL UPGRADE
 • Free to use with one card and banner ads
-• Budget Pro (a one-time purchase) removes ads and unlocks unlimited cards
+• Budget Pro (a one-time purchase) removes ads, unlocks unlimited cards, and adds a
+  subscription tracker that spots recurring charges and reminds you before they renew
 
 Coinfold is a simple, beautiful way to understand your spending — without handing your bank credentials to anyone.
 ```

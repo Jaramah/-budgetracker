@@ -15,6 +15,7 @@ struct PaywallView: View {
 
     private let features: [(String, String, String)] = [
         ("creditcard.fill", "Unlimited cards", "Add as many credit cards as you like and import each one's statements."),
+        ("arrow.triangle.2.circlepath", "Subscription tracker", "Auto-spot recurring charges and get reminded before they renew — so you can cancel what you don't use."),
         ("hand.raised.slash.fill", "No ads", "Remove the banner ads across every tab."),
         ("heart.fill", "Support development", "A one-time purchase that keeps the app growing — no subscription.")
     ]
