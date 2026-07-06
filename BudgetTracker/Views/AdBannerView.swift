@@ -14,8 +14,8 @@ import GoogleMobileAds
 /// screen width.
 struct AdBannerView: UIViewRepresentable {
     func makeUIView(context: Context) -> BannerView {
-        let width = UIScreen.main.bounds.width
-        let banner = BannerView(adSize: currentOrientationAnchoredAdaptiveBanner(width: width))
+        // Standard 320×50 banner — stable across SDK versions and matches the 50pt slot.
+        let banner = BannerView(adSize: AdSizeBanner)
         banner.adUnitID = AdConfig.bannerUnitID
         banner.rootViewController = Self.rootViewController
         banner.load(Request())

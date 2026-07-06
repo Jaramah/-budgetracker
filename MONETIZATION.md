@@ -23,33 +23,27 @@ SDK package below.
 
 ---
 
-## 1. Add the Google Mobile Ads SDK (Swift Package Manager)
+## 1. Google Mobile Ads SDK — ✅ done
 
-In Xcode: **File ▸ Add Package Dependencies…** and add:
+The SDK is wired in `project.yml` (pinned remote, **v13.6.0**) and survives
+`xcodegen generate`:
 
+```yaml
+packages:
+  GoogleMobileAds:
+    url: https://github.com/googleads/swift-package-manager-google-mobile-ads
+    exactVersion: "13.6.0"
+# …and on the BudgetTracker target:
+    dependencies:
+      - package: GoogleMobileAds
 ```
-https://github.com/googleads/swift-package-manager-google-mobile-ads
-```
 
-Pick the latest version and add the **GoogleMobileAds** product to the **BudgetTracker**
-target.
+The banner code targets the modern v13 API (`BannerView`, `Request()`,
+`MobileAds.shared`, `AdSizeBanner`) and is verified to build **and** render a Google
+test banner. To bump the SDK later, change `exactVersion` and re-run `xcodegen generate`.
 
-> Prefer keeping it in `project.yml` so `xcodegen generate` doesn't drop it? Add this
-> under the `BudgetTracker` target and re-run `xcodegen generate`:
->
-> ```yaml
->     dependencies:
->       - package: GoogleMobileAds
->   # and at the top level:
->   packages:
->     GoogleMobileAds:
->       url: https://github.com/googleads/swift-package-manager-google-mobile-ads
->       from: 12.0.0
-> ```
-
-The banner code targets the **modern GoogleMobileAds API (v12+)** — `BannerView`,
-`Request()`, `MobileAds.shared`. If you pin an older major version whose symbols are
-`GAD`-prefixed, adjust the names in `Views/AdBannerView.swift` / `Helpers/AdsBootstrap.swift`.
+> If you originally cloned the SDK locally (`swift-package-manager-google-mobile-ads/`),
+> that folder is now redundant (git-ignored) — you can delete it.
 
 ## 2. Create an AdMob account and real ad IDs
 
