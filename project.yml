@@ -107,6 +107,8 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - BudgetTrackerTests
+      - path: BudgetTracker.storekit
+        buildPhase: resources
     dependencies:
       - target: BudgetTracker
     settings:
@@ -138,6 +140,9 @@ schemes:
       targets:
         - BudgetTrackerTests
         - BudgetTrackerUITests
+      # Bind the StoreKit config to the test action so Product.products routes
+      # through it (StoreKit 2 under XCTest needs this, not just SKTestSession).
+      storeKitConfiguration: BudgetTracker.storekit
     run:
       config: Debug
       # Lets the Pro purchase be tested in the simulator without App Store Connect.

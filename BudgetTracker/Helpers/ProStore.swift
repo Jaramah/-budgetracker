@@ -68,27 +68,41 @@ final class ProStore: ObservableObject {
         setPro(unlocked)
     }
 
-    /// Kick off the purchase flow. Returns true once Pro is unlocked.
+    /// The result of a purchase attempt, so the UI can explain what happened
+    /// instead of silently doing nothing.
+    enum PurchaseOutcome: Equatable {
+        case success
+        case cancelled
+        case pending            // Ask-to-Buy etc. — will complete later
+        case unavailable        // product didn't load (not signed in / no config / offline)
+        case failed(String)     // verification or StoreKit error
+    }
+
+    /// Kick off the purchase flow.
     @discardableResult
-    func purchase() async -> Bool {
+    func purchase() async -> PurchaseOutcome {
         if product == nil { await loadProduct() }
-        guard let product else { return false }
+        guard let product else { return .unavailable }
         purchaseInFlight = true
         defer { purchaseInFlight = false }
         do {
             switch try await product.purchase() {
             case .success(let verification):
-                guard case .verified(let tx) = verification else { return false }
+                guard case .verified(let tx) = verification else {
+                    return .failed("Could not verify the purchase. Please try again.")
+                }
                 await tx.finish()
                 setPro(true)
-                return true
-            case .userCancelled, .pending:
-                return false
+                return .success
+            case .userCancelled:
+                return .cancelled
+            case .pending:
+                return .pending
             @unknown default:
-                return false
+                return .failed("The purchase could not be completed.")
             }
         } catch {
-            return false
+            return .failed(error.localizedDescription)
         }
     }
 

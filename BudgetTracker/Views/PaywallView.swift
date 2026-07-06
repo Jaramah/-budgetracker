@@ -11,6 +11,7 @@ struct PaywallView: View {
     var reason: String?
 
     @State private var restoreMessage: String?
+    @State private var purchaseMessage: String?
 
     private let features: [(String, String, String)] = [
         ("creditcard.fill", "Unlimited cards", "Add as many credit cards as you like and import each one's statements."),
@@ -61,6 +62,11 @@ struct PaywallView: View {
         } message: {
             Text(restoreMessage ?? "")
         }
+        .alert("Purchase", isPresented: .constant(purchaseMessage != nil)) {
+            Button("OK") { purchaseMessage = nil }
+        } message: {
+            Text(purchaseMessage ?? "")
+        }
     }
 
     private var header: some View {
@@ -99,7 +105,18 @@ struct PaywallView: View {
 
     private var buyButton: some View {
         Button {
-            Task { await store.purchase() }
+            Task {
+                switch await store.purchase() {
+                case .success, .cancelled:
+                    break               // success dismisses via onChange; cancel is silent
+                case .pending:
+                    purchaseMessage = "Your purchase is pending approval. Pro unlocks once it's approved."
+                case .unavailable:
+                    purchaseMessage = "Budget Pro isn't available right now. If you're testing, run the app from Xcode (or sign in to a Sandbox account); otherwise check your connection and try again."
+                case .failed(let reason):
+                    purchaseMessage = reason
+                }
+            }
         } label: {
             HStack {
                 if store.purchaseInFlight {
