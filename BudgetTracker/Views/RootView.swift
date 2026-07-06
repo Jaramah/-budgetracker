@@ -9,6 +9,7 @@ struct RootView: View {
     @State private var tab = 0
     @State private var showAdd = false
     @State private var showBills = false
+    @State private var showSubscriptions = false
 
     /// For marketing captures: `UI_SCREEN` (launch env) opens the app directly on a
     /// screen so each shot is a deterministic fresh launch, no in-app tapping. Absent
@@ -34,7 +35,8 @@ struct RootView: View {
                 case 0: HomeView(
                             onSeeAllActivity: { tab = 1 },
                             onSeeBills: { showBills = true },
-                            onSeeCategories: { tab = 2; appState.accountsSegment = 1 })
+                            onSeeCategories: { tab = 2; appState.accountsSegment = 1 },
+                            onSeeSubscriptions: { showSubscriptions = true })
                 case 1: ActivityView()
                 case 2: AccountsView()
                 default: SettingsView()
@@ -56,10 +58,12 @@ struct RootView: View {
         .auroraBackground()
         .sheet(isPresented: $showAdd) { AddTransactionView() }
         .sheet(isPresented: $showBills) { BillsView() }
+        .sheet(isPresented: $showSubscriptions) { SubscriptionsView() }
         .onAppear {
             switch RootView.launchScreen {
             case "cards":               appState.accountsSegment = 0
             case "budget", "analytics": appState.accountsSegment = 1
+            case "subscriptions":       showSubscriptions = true
             default: break
             }
         }

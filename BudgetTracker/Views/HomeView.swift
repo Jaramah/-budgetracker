@@ -10,10 +10,12 @@ struct HomeView: View {
     @Query private var transactions: [Transaction]
     @Query(sort: \Category.sortIndex) private var categories: [Category]
     @Query(sort: \Bill.sortIndex) private var bills: [Bill]
+    @Query private var subscriptions: [Subscription]
 
     var onSeeAllActivity: (() -> Void)? = nil
     var onSeeBills: (() -> Void)? = nil
     var onSeeCategories: (() -> Void)? = nil
+    var onSeeSubscriptions: (() -> Void)? = nil
 
     /// Home always reports the **current** month — it's the "how am I doing right
     /// now" screen. Browsing past months lives in the Accounts ▸ Budget tab.
@@ -78,6 +80,7 @@ struct HomeView: View {
                     greeting
                     availableCard
                     categoryCard
+                    subscriptionsCard
                     billsCard
                     recentCard
                     Color.clear.frame(height: 72) // space for tab bar
@@ -223,6 +226,36 @@ struct HomeView: View {
                 .font(.caption.weight(.medium)).monospacedDigit()
                 .foregroundStyle(DS.inkPrimary)
         }
+    }
+
+    // MARK: Subscriptions card (Pro teaser / entry point)
+    private var trackedSubs: [Subscription] {
+        subscriptions.filter { $0.status == .active || $0.status == .suggested }
+    }
+    private var subsMonthlyCents: Int {
+        trackedSubs.reduce(0) { $0 + $1.monthlyEquivalentCents }
+    }
+
+    private var subscriptionsCard: some View {
+        Button { onSeeSubscriptions?() } label: {
+            AuroraCard {
+                HStack(spacing: 12) {
+                    IconChip(symbol: "arrow.triangle.2.circlepath", tint: DS.accent, size: 40)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Subscriptions")
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(DS.inkPrimary)
+                        Text(trackedSubs.isEmpty
+                             ? "Find recurring charges in your statements"
+                             : "\(trackedSubs.count) tracked · \(Money.string(subsMonthlyCents)) / mo")
+                            .font(.caption).foregroundStyle(DS.inkTertiary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold)).foregroundStyle(DS.inkTertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Bills card

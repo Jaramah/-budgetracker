@@ -18,7 +18,8 @@ struct BudgetTrackerApp: App {
             CreditCardAccount.self,
             RecurringRule.self,
             Goal.self,
-            Bill.self
+            Bill.self,
+            Subscription.self
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
@@ -52,6 +53,14 @@ struct BudgetTrackerApp: App {
                         await SampleData.seedIfNeeded(container.mainContext)
                         DemoSeed.seedIfNeeded(container.mainContext)   // no-op unless DEMO_SEED=1
                         RecurringMaterializer.run(context: container.mainContext)
+
+                        // Detect subscriptions from imported transactions and keep
+                        // their renewal reminders scheduled.
+                        let ctx = container.mainContext
+                        let txs = (try? ctx.fetch(FetchDescriptor<Transaction>())) ?? []
+                        SubscriptionDetector.refresh(transactions: txs, context: ctx)
+                        let subs = (try? ctx.fetch(FetchDescriptor<Subscription>())) ?? []
+                        SubscriptionReminderScheduler.reschedule(subscriptions: subs)
                     }
                     .task {
                         // Free users see ads; ask ATT + start the SDK once Pro state is known.

@@ -24,9 +24,15 @@ final class ProStore: ObservableObject {
     private static let cacheKey = "proUnlocked"
     private var updatesTask: Task<Void, Never>?
 
+    /// Debug-only: `PRO_OVERRIDE=1` forces Pro on (for previewing Pro UI without a
+    /// purchase). No-op in a normal/shipped launch.
+    private static var proOverride: Bool {
+        ProcessInfo.processInfo.environment["PRO_OVERRIDE"] == "1"
+    }
+
     init() {
         // Optimistic launch-time value; reconciled against StoreKit in `refresh()`.
-        isPro = UserDefaults.standard.bool(forKey: Self.cacheKey)
+        isPro = Self.proOverride || UserDefaults.standard.bool(forKey: Self.cacheKey)
         updatesTask = observeTransactionUpdates()
         Task { await refresh() }
     }
@@ -115,7 +121,8 @@ final class ProStore: ObservableObject {
     }
 
     private func setPro(_ value: Bool) {
-        if isPro != value { isPro = value }
+        let v = value || Self.proOverride     // never downgrade under the debug override
+        if isPro != v { isPro = v }
         UserDefaults.standard.set(value, forKey: Self.cacheKey)
     }
 

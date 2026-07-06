@@ -24,6 +24,7 @@ struct SettingsView: View {
     @State private var showCurrencyPicker = false
     @State private var showCategories = false
     @State private var showRecurring = false
+    @State private var showSubscriptions = false
     @State private var showShare = false
     @State private var shareURL: URL?
     @State private var showEraseConfirm = false
@@ -71,6 +72,10 @@ struct SettingsView: View {
         // Recurring rules manager
         .sheet(isPresented: $showRecurring) {
             RecurringRulesView()
+        }
+        // Subscription tracker
+        .sheet(isPresented: $showSubscriptions) {
+            SubscriptionsView()
         }
         // Share sheet for CSV export
         .sheet(isPresented: $showShare) {
@@ -233,6 +238,9 @@ struct SettingsView: View {
             SettingsRow(icon: "square.grid.2x2.fill", tint: DS.accent,
                         title: "Categories", value: nil) { showCategories = true }
             Divider().overlay(DS.hairline)
+            SettingsRow(icon: "arrow.triangle.2.circlepath.circle.fill", tint: DS.accentSoft,
+                        title: "Subscriptions", value: nil) { showSubscriptions = true }
+            Divider().overlay(DS.hairline)
             SettingsRow(icon: "arrow.triangle.2.circlepath", tint: DS.moneyIn,
                         title: "Recurring rules", value: nil) { showRecurring = true }
         }
@@ -298,6 +306,7 @@ struct SettingsView: View {
         deleteAll(RecurringRule.self)
         deleteAll(StatementImport.self)
         deleteAll(StatementLine.self)
+        deleteAll(Subscription.self)
         deleteAll(Category.self)
         try? context.save()
         PaymentReminderScheduler.reschedule(cards: [])
