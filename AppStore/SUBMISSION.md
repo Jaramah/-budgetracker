@@ -62,8 +62,7 @@ App Store Connect ▸ your app ▸ **In-App Purchases** ▸ **+** :
 
 **Promotional Text** (max 170, editable anytime without review):
 ```
-Upload your bank's PDF statement and see exactly where your money goes —
-categorized automatically, kept private on your device. No logins, no bank connections.
+See exactly where your money goes: import your bank's PDF statement, track spending by category, and catch every subscription — private, on your iPhone.
 ```
 
 **Description** (max 4000):
@@ -81,6 +80,11 @@ SEE WHERE IT GOES
 • Spending-by-category breakdown with a clean donut chart
 • Monthly budgets with budget-vs-actual progress
 • Analytics: top categories, spending by week, averages
+
+NEVER GET SURPRISED BY A SUBSCRIPTION
+• Coinfold spots recurring charges automatically — streaming, music, telco and more
+• See what you're really spending on subscriptions each month
+• Get a reminder before each one renews, so you can cancel what you don't use
 
 STAY ON TOP OF IT
 • Keep every card and its balance in one place
