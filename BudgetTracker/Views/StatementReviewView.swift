@@ -246,6 +246,9 @@ struct StatementReviewView: View {
         if let earliest = lines.map({ $0.date }).min() {
             appState.goToMonth(of: earliest)
         }
+        // A successful import is a genuine "happy moment" — a good time to ask for
+        // a rating (throttled; won't fire on the very first import).
+        AppReview.recordPositiveAction()
         dismiss()
     }
 }

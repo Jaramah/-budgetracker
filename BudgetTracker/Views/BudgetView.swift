@@ -11,6 +11,8 @@ struct BudgetView: View {
     @Query private var transactions: [Transaction]
     @Query(sort: \Category.sortIndex) private var categories: [Category]
     @State private var tab = 0
+    @State private var showShare = false
+    @State private var shareItems: [Any] = []
 
     init() {
         // Marketing capture: open straight to the Analytics sub-tab when asked.
@@ -28,6 +30,9 @@ struct BudgetView: View {
         VStack(spacing: 16) {
             SegmentPills(options: ["Categories", "Analytics"], selection: $tab)
             if tab == 0 { categoriesTab } else { analyticsTab }
+        }
+        .sheet(isPresented: $showShare) {
+            if !shareItems.isEmpty { ShareSheet(items: shareItems) }
         }
     }
 
@@ -122,7 +127,12 @@ struct BudgetView: View {
             }
             AuroraCard {
                 VStack(spacing: 14) {
-                    SectionHeader(title: "By category")
+                    if spentCents > 0 {
+                        SectionHeader(title: "By category", actionLabel: "Share",
+                                      action: { shareAnalytics() })
+                    } else {
+                        SectionHeader(title: "By category")
+                    }
                     HStack(spacing: 16) {
                         CategoryDonut(slices: donutSlices,
                                       lineWidth: 16, centerTop: "Total",
@@ -149,6 +159,36 @@ struct BudgetView: View {
                 }
             }
         }
+    }
+
+    /// Render the branded analytics card to an image and open the share sheet.
+    @MainActor
+    private func shareAnalytics() {
+        guard spentCents > 0 else { Haptics.warning(); return }
+
+        var legend = byCategory.map { (name: $0.cat.name, cents: $0.cents, color: $0.color) }
+        if uncategorizedCents > 0 {
+            legend.append((name: "Uncategorized", cents: uncategorizedCents,
+                           color: DS.inkTertiary.opacity(0.5)))
+        }
+
+        let card = AnalyticsShareCard(
+            monthLabel: DateHelpers.monthYearLabel(month),
+            spentCents: spentCents,
+            slices: donutSlices,
+            legend: legend
+        )
+        let renderer = ImageRenderer(content: card)
+        renderer.scale = 3
+        guard let image = renderer.uiImage else { Haptics.warning(); return }
+
+        var caption = "Here's where my money went in \(DateHelpers.monthYearLabel(month)) 📊 "
+            + "Tracked privately with Budget — it reads your bank statement right on your iPhone."
+        if let url = AppInfo.listingURL { caption += "\n\(url.absoluteString)" }
+
+        shareItems = [image, caption]
+        showShare = true
+        Haptics.tap()
     }
 
     private func legendRow(color: Color, name: String, cents: Int) -> some View {

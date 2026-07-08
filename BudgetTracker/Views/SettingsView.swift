@@ -7,6 +7,7 @@ import SwiftData
 /// (CSV export, erase all), and About.
 struct SettingsView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var store: ProStore
 
@@ -271,12 +272,26 @@ struct SettingsView: View {
                 Text(appVersion).foregroundStyle(DS.inkTertiary)
             }
             Divider().overlay(DS.hairline)
+            SettingsRow(icon: "star.fill", tint: DS.warning,
+                        title: "Rate Budget", value: nil) { rateApp() }
+            Divider().overlay(DS.hairline)
             HStack {
                 SettingsLabel(icon: "lock.shield.fill", tint: DS.moneyIn,
                               title: "Private by design", subtitle: "All data stays on this device")
                 Spacer()
             }
         }
+    }
+
+    /// Open the App Store review page if we have an ID; otherwise fall back to the
+    /// in-app rating prompt.
+    private func rateApp() {
+        if let url = AppInfo.writeReviewURL {
+            openURL(url)
+        } else {
+            AppReview.requestReview()
+        }
+        Haptics.tap()
     }
 
     private var appVersion: String {
