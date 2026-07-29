@@ -18,6 +18,15 @@ final class BillsEmptyStateUITests: XCTestCase {
         // picked the categories one, which switches tab instead of opening a sheet.
         let seeAllBills = app.buttons["seeAll.Upcoming bills"]
         XCTAssertTrue(seeAllBills.waitForExistence(timeout: 5), "bills See all missing")
+        // Existing is not the same as tappable. Home scrolls, and the bills section
+        // sits low enough that the button lands under the tab bar and the ad banner
+        // — present in the hierarchy, but not hittable. Scroll it clear first.
+        var scrolls = 0
+        while !seeAllBills.isHittable && scrolls < 6 {
+            app.swipeUp()
+            scrolls += 1
+        }
+        XCTAssertTrue(seeAllBills.isHittable, "bills See all never scrolled clear of the tab bar")
         seeAllBills.tap()
         XCTAssertTrue(app.navigationBars["Bills"].waitForExistence(timeout: 5), "Bills sheet didn't open")
 
