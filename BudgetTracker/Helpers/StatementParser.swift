@@ -186,9 +186,60 @@ enum StatementParser {
 
     // MARK: CSV
 
-    /// Heuristic CSV parser. Finds the column that looks like a date, the one that
-    /// looks like an amount, and treats the longest remaining text column as the
-    /// description. Handles quoted fields and an optional header row.
+    /// Which column holds what, resolved from the header row.
+    struct CSVLayout {
+        var date: Int?
+        var desc: Int?
+        /// Single signed amount column.
+        var amount: Int?
+        /// Separate debit / credit columns (Chase, Amex, several SG banks).
+        var debit: Int?
+        var credit: Int?
+        /// Running balance — never a transaction amount, so it must be excluded.
+        var balance: Int?
+
+        var hasAmountSource: Bool { amount != nil || debit != nil || credit != nil }
+    }
+
+    /// Map a header row to columns by name.
+    ///
+    /// Naming a column beats guessing at it. The previous parser took the
+    /// *rightmost* number on each row, and almost every bank exports
+    /// `Date, Description, Amount, Balance` — so it imported running balances as
+    /// if they were charges.
+    static func csvLayout(header: [String]) -> CSVLayout? {
+        var l = CSVLayout()
+        var recognised = 0
+        for (i, raw) in header.enumerated() {
+            let h = raw.lowercased().trimmingCharacters(in: .whitespaces)
+            guard !h.isEmpty else { continue }
+            // Balance first: "closing balance" also contains no amount keyword,
+            // but "available balance" must never be mistaken for an amount.
+            if h.contains("balance") {
+                l.balance = l.balance ?? i; recognised += 1
+            } else if h.contains("debit") || h.contains("withdrawal") || h.contains("paid out") {
+                l.debit = l.debit ?? i; recognised += 1
+            } else if h.contains("credit") || h.contains("deposit") || h.contains("paid in") {
+                l.credit = l.credit ?? i; recognised += 1
+            } else if h.contains("amount") || h.contains("value") {
+                l.amount = l.amount ?? i; recognised += 1
+            } else if h.contains("date") {
+                // Prefer a transaction date over a posting date when both exist.
+                if l.date == nil || h.contains("trans") { l.date = i }
+                recognised += 1
+            } else if h.contains("desc") || h.contains("detail") || h.contains("narrat")
+                        || h.contains("particular") || h.contains("merchant")
+                        || h.contains("reference") || h.contains("payee") {
+                l.desc = l.desc ?? i; recognised += 1
+            }
+        }
+        // Require a real header, not a data row that happened to contain a word.
+        guard recognised >= 2, l.date != nil, l.hasAmountSource else { return nil }
+        return l
+    }
+
+    /// CSV parser. Prefers a named header; falls back to positional heuristics
+    /// only when the file has no usable header row.
     static func parseCSV(_ text: String) -> [ParsedLine] {
         let rawRows = text
             .replacingOccurrences(of: "\r\n", with: "\n")
@@ -199,25 +250,98 @@ enum StatementParser {
         guard !rawRows.isEmpty else { return [] }
 
         var rows = rawRows.map { splitCSVLine($0) }
+        let layout = rows.first.flatMap { csvLayout(header: $0) }
+        if layout != nil { rows.removeFirst() }
+        else if let first = rows.first, firstAmount(in: first) == nil { rows.removeFirst() }
 
-        // Drop a header row if the first row has no parseable amount.
-        if let first = rows.first, firstAmount(in: first) == nil {
-            rows.removeFirst()
-        }
+        // Day/month order is ambiguous in dd/MM vs MM/dd files. One value with a
+        // first component above 12 settles it for the whole file, which is far more
+        // reliable than a fixed global preference — that silently swapped every US
+        // date where the day was 12 or lower.
+        let order = detectDayMonthOrder(rows: rows, dateColumn: layout?.date)
 
         var result: [ParsedLine] = []
         for cols in rows {
-            guard let amount = firstAmount(in: cols) else { continue }
-            let date = firstDate(in: cols) ?? Date()
-            // Description = longest column that isn't the date or the amount text.
-            let desc = cols
-                .filter { parseDate($0) == nil && parseAmount($0) == nil }
-                .max(by: { $0.count < $1.count })?
-                .trimmingCharacters(in: .whitespaces) ?? "Transaction"
-            let lowConf = firstDate(in: cols) == nil
-            result.append(ParsedLine(date: date, desc: desc, amountCents: Money.centsFromDouble(amount), lowConfidence: lowConf))
+            guard let (amount, isCredit) = csvAmount(cols, layout: layout) else { continue }
+            // Credits are payments, refunds and salary — not spending. The PDF
+            // parsers already exclude them; the CSV path used to import them as
+            // positive charges, inflating every total.
+            if isCredit { continue }
+
+            let dateText = layout?.date.flatMap { cols.indices.contains($0) ? cols[$0] : nil }
+            let date = dateText.flatMap { parseDate($0, order: order) }
+                ?? firstDate(in: cols, order: order)
+            let desc = csvDescription(cols, layout: layout)
+            result.append(ParsedLine(date: date ?? Date(),
+                                     desc: desc,
+                                     amountCents: Money.centsFromDouble(abs(amount)),
+                                     lowConfidence: date == nil))
         }
         return result
+    }
+
+    /// The charge for a row, and whether it is a credit.
+    private static func csvAmount(_ cols: [String], layout: CSVLayout?) -> (Double, Bool)? {
+        func value(_ i: Int?) -> Double? {
+            guard let i, cols.indices.contains(i) else { return nil }
+            return parseAmount(cols[i])
+        }
+        if let layout {
+            // Separate debit/credit columns: whichever is populated wins.
+            if layout.debit != nil || layout.credit != nil {
+                if let d = value(layout.debit), d != 0 { return (d, false) }
+                if let c = value(layout.credit), c != 0 { return (c, true) }
+                return nil
+            }
+            guard let a = value(layout.amount) else { return nil }
+            // A single signed column: negative conventionally means a credit, but
+            // some banks sign the other way. Sign alone is all we have here.
+            return (a, a < 0)
+        }
+        // No header — fall back to the old positional guess, minus the bug that
+        // let a date column parse as a very large amount.
+        guard let a = firstAmount(in: cols) else { return nil }
+        return (a, a < 0)
+    }
+
+    private static func csvDescription(_ cols: [String], layout: CSVLayout?) -> String {
+        if let i = layout?.desc, cols.indices.contains(i) {
+            let d = cols[i].trimmingCharacters(in: .whitespaces)
+            if !d.isEmpty { return d }
+        }
+        // Longest column that is neither a date nor an amount.
+        let d = cols
+            .filter { parseDate($0) == nil && parseAmount($0) == nil }
+            .max(by: { $0.count < $1.count })?
+            .trimmingCharacters(in: .whitespaces)
+        return (d?.isEmpty == false ? d! : "Transaction")
+    }
+
+    /// Whether a file's slash dates are dd/MM or MM/dd, decided from evidence.
+    static func detectDayMonthOrder(rows: [[String]], dateColumn: Int?) -> DayMonthOrder {
+        let re = try? NSRegularExpression(pattern: #"^(\d{1,2})[/\-.](\d{1,2})([/\-.]\d{2,4})?$"#)
+        guard let re else { return .ambiguous }
+        var firstAbove12 = false, secondAbove12 = false
+        for cols in rows {
+            let candidates: [String] = dateColumn.map { i in
+                cols.indices.contains(i) ? [cols[i]] : []
+            } ?? cols
+            for raw in candidates {
+                let s = raw.trimmingCharacters(in: .whitespaces)
+                let r = NSRange(s.startIndex..., in: s)
+                guard let m = re.firstMatch(in: s, range: r),
+                      let r1 = Range(m.range(at: 1), in: s),
+                      let r2 = Range(m.range(at: 2), in: s),
+                      let a = Int(s[r1]), let b = Int(s[r2]) else { continue }
+                if a > 12 { firstAbove12 = true }
+                if b > 12 { secondAbove12 = true }
+            }
+        }
+        // Both can't be the day. If they disagree the file is inconsistent, so
+        // stay ambiguous rather than committing to a wrong reading.
+        if firstAbove12 && !secondAbove12 { return .dayFirst }
+        if secondAbove12 && !firstAbove12 { return .monthFirst }
+        return .ambiguous
     }
 
     /// Split a CSV line respecting double-quoted fields.
@@ -239,12 +363,15 @@ enum StatementParser {
         return fields.map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
+    /// Rightmost money-shaped column. Used only when a file has no usable header
+    /// — `csvLayout` names the columns whenever one exists, because the rightmost
+    /// number is the running balance in most bank exports, not the charge.
     private static func firstAmount(in cols: [String]) -> Double? {
         for c in cols.reversed() { if let a = parseAmount(c) { return a } }
         return nil
     }
-    private static func firstDate(in cols: [String]) -> Date? {
-        for c in cols { if let d = parseDate(c) { return d } }
+    private static func firstDate(in cols: [String], order: DayMonthOrder = .ambiguous) -> Date? {
+        for c in cols { if let d = parseDate(c, order: order) { return d } }
         return nil
     }
 
@@ -302,19 +429,42 @@ enum StatementParser {
     /// Parse a money string like "$1,234.56", "1234.56", "-12.00", "45.00 CR".
     static func parseAmount(_ s: String) -> Double? {
         var t = s.uppercased().trimmingCharacters(in: .whitespaces)
-        guard t.range(of: #"[0-9]"#, options: .regularExpression) != nil else { return nil }
+        guard !t.isEmpty else { return nil }
+
+        // A date is not an amount. The old version stripped every character that
+        // wasn't a digit or a dot and parsed whatever survived, so "16/05/2026"
+        // became 16,052,026.00 and "7-ELEVEN" became -7. Both then competed to be
+        // a row's amount.
+        // A dot is only a date separator in the three-part form (16.05.2026);
+        // treating it as one everywhere would classify the amount "12.5" as a date.
+        if t.range(of: #"^\d{1,4}[/\-]\d{1,2}([/\-]\d{1,4})?$|^\d{1,2}\.\d{1,2}\.\d{2,4}$"#,
+                   options: .regularExpression) != nil { return nil }
+
+        let paren = t.hasPrefix("(") && t.hasSuffix(")")
         let isCredit = t.contains("CR")
-        let isNeg = t.contains("-")
         t = t.replacingOccurrences(of: "CR", with: "")
              .replacingOccurrences(of: "DR", with: "")
-        t = t.components(separatedBy: CharacterSet(charactersIn: "0123456789.").inverted)
-             .joined()
-        guard let v = Double(t) else { return nil }
-        return (isCredit || isNeg) ? -v : v
+        // Strip only currency decoration. Anything else that isn't money now fails
+        // the shape check below instead of being mangled into a number.
+        t = t.replacingOccurrences(of: #"[\s$€£¥₹()]"#, with: "", options: .regularExpression)
+
+        guard t.range(of: #"^[+\-]?\d{1,3}(,\d{3})+(\.\d+)?$|^[+\-]?\d+(\.\d+)?$"#,
+                      options: .regularExpression) != nil else { return nil }
+
+        let isNeg = t.hasPrefix("-")
+        let digits = t.replacingOccurrences(of: ",", with: "")
+                      .trimmingCharacters(in: CharacterSet(charactersIn: "+-"))
+        guard let v = Double(digits) else { return nil }
+        return (isCredit || isNeg || paren) ? -v : v
     }
 
+    /// Which component of a slash date comes first. Decided per file from the data
+    /// rather than assumed, because a fixed preference silently swaps day and month
+    /// for every date where both are 12 or lower.
+    enum DayMonthOrder { case dayFirst, monthFirst, ambiguous }
+
     /// Parse a date in several common statement formats.
-    static func parseDate(_ s: String) -> Date? {
+    static func parseDate(_ s: String, order: DayMonthOrder = .ambiguous) -> Date? {
         let raw = s.trimmingCharacters(in: .whitespaces)
         // DateFormatter month symbols are case-sensitive, but banks print months in
         // any case — Standard Chartered/HSBC often use UPPERCASE ("16 MAY"). Try the
@@ -323,12 +473,22 @@ enum StatementParser {
         let titled = titleCasedWords(raw)
         if titled != raw { candidates.append(titled) }
 
-        let formats = [
-            "dd/MM/yyyy", "MM/dd/yyyy", "yyyy-MM-dd", "dd-MM-yyyy",
-            "dd/MM/yy", "MM/dd/yy", "dd MMM yyyy", "dd MMM", "MMM dd, yyyy",
-            "dd.MM.yyyy", "d/M/yyyy", "d MMM yyyy", "dd/MM", "d/M",
-            "dd MMMM yyyy", "d MMMM yyyy", "dd MMMM", "d MMMM"   // full month names
+        // Formats with a spelled-out month, or an ISO year first, are unambiguous
+        // and must be tried before any numeric ordering guess.
+        let unambiguous = [
+            "yyyy-MM-dd", "dd MMM yyyy", "d MMM yyyy", "dd MMM", "MMM dd, yyyy",
+            "dd MMMM yyyy", "d MMMM yyyy", "dd MMMM", "d MMMM"
         ]
+        let dayFirst   = ["dd/MM/yyyy", "dd/MM/yy", "d/M/yyyy", "dd-MM-yyyy",
+                          "dd.MM.yyyy", "dd/MM", "d/M"]
+        let monthFirst = ["MM/dd/yyyy", "MM/dd/yy", "M/d/yyyy", "MM/dd", "M/d"]
+        // `.ambiguous` keeps day-first leading, matching the previous behaviour for
+        // files that give us no evidence either way.
+        let formats: [String]
+        switch order {
+        case .monthFirst: formats = unambiguous + monthFirst + dayFirst
+        case .dayFirst, .ambiguous: formats = unambiguous + dayFirst + monthFirst
+        }
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX")
         for f in formats {
