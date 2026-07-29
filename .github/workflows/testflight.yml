@@ -155,9 +155,14 @@ jobs:
           RAW=$(mktemp)
           ALL=$(mktemp)
 
-          # Normalise line endings first — a CRLF paste breaks strict PEM parsers
-          # even when the key material itself is intact.
-          printf '%s\n' "$ASC_KEY_P8" | tr -d '\r' > "$ALL"
+          # Normalise line endings, then split fused armour onto its own lines.
+          # A .p8 ends WITHOUT a trailing newline, so pasting one more than once
+          # glues the blocks together as "-----END PRIVATE KEY----------BEGIN
+          # PRIVATE KEY-----". Every block then looks present to a marker count
+          # while none of them parses, because no block owns a clean END line.
+          printf '%s\n' "$ASC_KEY_P8" | tr -d '\r' \
+            | perl -pe 's/(-----END[A-Z ]*-----)/$1\n/g; s/(-----BEGIN)/\n$1/g' \
+            | sed '/^[[:space:]]*$/d' > "$ALL"
 
           BLOCKS=$(grep -c -- '-----BEGIN' "$ALL" || true)
           if [ "$BLOCKS" -gt 0 ]; then
