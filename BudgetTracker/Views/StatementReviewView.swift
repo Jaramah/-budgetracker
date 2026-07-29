@@ -13,6 +13,12 @@ struct StatementReviewView: View {
     let fileName: String
     @State var lines: [StatementParser.ParsedLine]
     var detectedBank: Bank = .unknown
+    /// Dates and totals the statement printed about itself. Empty for CSV imports,
+    /// which carry transactions only.
+    var meta: StatementParser.StatementMeta = .init()
+    var declaredTotalCents: Int? = nil
+    /// nil = the statement printed no total to check against.
+    var reconciled: Bool? = nil
     /// When a statement is uploaded from within an account, the card is already
     /// known — pass it here so the picker is pre-set (and shown as confirmed).
     var preselectedCardID: UUID? = nil
@@ -38,6 +44,32 @@ struct StatementReviewView: View {
         lines.filter { $0.amountCents < 0 }.reduce(0) { $0 + abs($1.amountCents) }
     }
     private var lowConfidenceCount: Int { lines.filter { $0.lowConfidence }.count }
+
+    /// Whether the parsed charges add up to the total the bank printed.
+    ///
+    /// This is the check that would have caught the UOB mispairing before it
+    /// reached anyone's data — the rows looked entirely plausible individually.
+    /// Surfacing it here means a bad import is visible *before* it is saved,
+    /// rather than only steering which parser wins behind the scenes.
+    @ViewBuilder
+    private var reconciliationRow: some View {
+        if let declaredTotalCents {
+            let diff = chargeTotalCents - declaredTotalCents
+            if reconciled == true {
+                Label("Balances with the statement total (\(Money.string(declaredTotalCents)))",
+                      systemImage: "checkmark.seal.fill")
+                    .foregroundStyle(DS.moneyIn).font(.callout)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Doesn't match the statement total",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(DS.moneyOut).font(.callout)
+                    Text("Statement says \(Money.string(declaredTotalCents)), these rows add up to \(Money.string(chargeTotalCents)) — \(diff > 0 ? "over" : "under") by \(Money.string(abs(diff))). Check the rows below before saving.")
+                        .font(.caption).foregroundStyle(DS.inkTertiary)
+                }
+            }
+        }
+    }
 
     private var matchPreview: (linked: Int, new: Int) {
         var usedIDs = Set<UUID>()
@@ -83,10 +115,26 @@ struct StatementReviewView: View {
                     }
                 }
 
+                if meta.statementDate != nil || meta.dueDate != nil {
+                    Section {
+                        if let d = meta.statementDate {
+                            LabeledContent("Statement date", value: DateHelpers.mediumDate(d))
+                        }
+                        if let d = meta.dueDate {
+                            LabeledContent("Payment due", value: DateHelpers.mediumDate(d))
+                        }
+                    } header: {
+                        Text("From the statement")
+                    } footer: {
+                        Text("Read from the statement itself, so the due date is the bank's own — not a guess from the card's due day.")
+                    }
+                }
+
                 Section {
                     LabeledContent("Rows parsed", value: "\(lines.count)")
                     LabeledContent("Charges", value: Money.string(chargeTotalCents))
                     LabeledContent("Payments / credits", value: Money.string(creditTotalCents))
+                    reconciliationRow
                     if lowConfidenceCount > 0 {
                         Label("\(lowConfidenceCount) row(s) need a quick check",
                               systemImage: "exclamationmark.triangle.fill")
@@ -145,6 +193,13 @@ struct StatementReviewView: View {
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(l.amountCents > 0 ? .primary : Color.green)
             }
+            // Foreign charges: show what the merchant actually billed. This used to
+            // be glued onto the end of the description ("… Seoul KRW 775,200.00").
+            if let code = l.foreignCurrency, let amt = l.foreignAmountCents {
+                Text("\(code) \(Money.plainString(amt))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(DS.inkTertiary)
+            }
             HStack {
                 DatePicker("", selection: line.date, displayedComponents: .date)
                     .labelsHidden()
@@ -201,12 +256,22 @@ struct StatementReviewView: View {
             cardID: selectedCardID,
             detectedBank: detectedBank
         )
+        statement.statementDate = meta.statementDate
+        // Prefer the date the bank printed; fall back to deriving it from the
+        // card's due day only when the statement didn't say.
+        statement.dueDate = meta.dueDate ?? meta.statementDate.flatMap { d in
+            cards.first { $0.id == selectedCardID }?.dueDate(forStatementDate: d)
+        }
+        statement.declaredTotalCents = declaredTotalCents
+        statement.reconciled = reconciled
         context.insert(statement)
 
         var usedIDs = Set<UUID>()
 
         for line in lines {
             let sl = StatementLine(date: line.date, desc: line.desc, amountCents: line.amountCents)
+            sl.foreignCurrency = line.foreignCurrency
+            sl.foreignAmountCents = line.foreignAmountCents
             sl.statement = statement
             context.insert(sl)
 

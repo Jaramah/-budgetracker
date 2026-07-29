@@ -13,8 +13,12 @@ final class BillsEmptyStateUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["Upcoming bills"].waitForExistence(timeout: 15))
 
-        // Open the Bills sheet (the bills section's "See all").
-        app.buttons["See all"].firstMatch.tap()
+        // Open the Bills sheet. Match the identifier, not the label: Home renders
+        // three "See all" buttons (categories, bills, activity) and firstMatch
+        // picked the categories one, which switches tab instead of opening a sheet.
+        let seeAllBills = app.buttons["seeAll.Upcoming bills"]
+        XCTAssertTrue(seeAllBills.waitForExistence(timeout: 5), "bills See all missing")
+        seeAllBills.tap()
         XCTAssertTrue(app.navigationBars["Bills"].waitForExistence(timeout: 5), "Bills sheet didn't open")
 
         // Mark every still-upcoming bill paid (no-op if they're already settled).

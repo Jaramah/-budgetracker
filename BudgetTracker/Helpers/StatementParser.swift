@@ -23,6 +23,12 @@ enum StatementParser {
         var lowConfidence: Bool = false
         /// Auto-assigned category (set on the review screen), user can override.
         var categoryID: UUID? = nil
+        /// ISO code of the currency actually charged, when the statement shows a
+        /// foreign transaction. `amountCents` stays in the card's own currency —
+        /// this is what the merchant billed before conversion.
+        var foreignCurrency: String? = nil
+        /// The original amount in minor units of `foreignCurrency`.
+        var foreignAmountCents: Int? = nil
     }
 
     enum ParseError: LocalizedError {
@@ -43,14 +49,34 @@ enum StatementParser {
 
     // MARK: Entry point
 
+    /// Everything an import needs to know, not just the rows.
+    struct ParseResult {
+        var lines: [ParsedLine]
+        /// Dates the statement printed about itself.
+        var meta = StatementMeta()
+        /// The total the bank footed its column with, if it printed one.
+        var declaredTotalCents: Int?
+        /// Whether the parsed debits add up to that total. `nil` when there was no
+        /// total to check against — which is not the same as "balanced", and the
+        /// review screen distinguishes the two.
+        var reconciled: Bool?
+    }
+
+    /// Convenience wrapper for callers that only want the rows.
     static func parse(url: URL) throws -> [ParsedLine] {
+        try parseDetailed(url: url).lines
+    }
+
+    static func parseDetailed(url: URL) throws -> ParseResult {
         let ext = url.pathExtension.lowercased()
         switch ext {
         case "csv", "txt":
             let text = try String(contentsOf: url, encoding: .utf8)
             let lines = parseCSV(text)
             if lines.isEmpty { throw ParseError.nothingFound }
-            return lines
+            // CSV exports carry transactions only — no statement header, so there
+            // are no dates or totals to recover.
+            return ParseResult(lines: lines)
         case "pdf":
             guard let doc = PDFDocument(url: url) else { throw ParseError.unsupported }
             // Password-protected statements (common for bank PDFs) can't be read.
@@ -79,15 +105,22 @@ enum StatementParser {
             // description score when the statement gives us nothing to check against.
             let declared = declaredTotalCents(in: text)
             let candidates = [lines, coord, block].filter { !$0.isEmpty }
-            let reconciled = candidates.filter { reconciles($0, declared: declared) }
-            let pool = reconciled.isEmpty ? candidates : reconciled
+            let reconciledPool = candidates.filter { reconciles($0, declared: declared) }
+            let pool = reconciledPool.isEmpty ? candidates : reconciledPool
+            let meta = statementMeta(in: text)
             // Ties go to the earliest candidate, preserving the old preference order
             // (line parser first, then coord, then block).
-            if let best = pool.max(by: { score($0) < score($1) }) { return best }
+            if let best = pool.max(by: { score($0) < score($1) }) {
+                return ParseResult(lines: annotateForeignAmounts(best), meta: meta,
+                                   declaredTotalCents: declared,
+                                   reconciled: declared.map { _ in reconciles(best, declared: declared) })
+            }
             // Fallback: naive single-line text scan for unusual layouts.
             let fallback = parsePDFText(text)
             if fallback.isEmpty { throw ParseError.nothingFound }
-            return fallback
+            return ParseResult(lines: annotateForeignAmounts(fallback), meta: meta,
+                               declaredTotalCents: declared,
+                               reconciled: declared.map { _ in reconciles(fallback, declared: declared) })
         default:
             throw ParseError.unsupported
         }
@@ -106,6 +139,145 @@ enum StatementParser {
             let hasWord = d.range(of: #"\p{L}{3,}"#, options: .regularExpression) != nil
             return acc + (hasWord ? 2 : -1)
         }
+    }
+
+    // MARK: Statement metadata
+
+    /// Dates a statement prints about itself.
+    struct StatementMeta {
+        /// The date the statement was issued ("Statement Date  19 JUL 2026").
+        var statementDate: Date?
+        /// The payment due date the bank printed ("Due Date  07 AUG 2026").
+        ///
+        /// Worth far more than a computed one: it is the bank's own answer, so it
+        /// already accounts for weekends, holidays and the cycle rolling into the
+        /// next month. Only fall back to `CreditCardAccount.dueDate(forStatementDate:)`
+        /// when a statement doesn't print it.
+        var dueDate: Date?
+    }
+
+    private static let statementDateLabels = ["statement date", "statement dated", "date of statement"]
+    private static let dueDateLabels = ["payment due date", "due date", "payment due by", "pay by date"]
+
+    /// Pull the statement and due dates out of a statement's text.
+    ///
+    /// Handles both shapes the text layer produces: label and value on one line
+    /// (`-layout`-style extraction) and label and value on consecutive lines
+    /// (PDFKit's stream order often splits them).
+    static func statementMeta(in text: String) -> StatementMeta {
+        let rows = text
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        var meta = StatementMeta()
+
+        func value(at i: Int, after label: String) -> Date? {
+            let row = rows[i]
+            // Search the original string case-insensitively: indices taken from a
+            // lowercased copy are not valid in the original, and lowercasing can
+            // change length for non-ASCII, so offsetting between them is unsound.
+            if let r = row.range(of: label, options: .caseInsensitive) {
+                if let d = firstDate(inText: String(row[r.upperBound...])) { return d }
+            }
+            // Otherwise the next couple of non-empty lines — PDFKit's stream order
+            // routinely splits a label from its value.
+            for j in (i + 1)...(i + 2) where rows.indices.contains(j) {
+                if let d = firstDate(inText: rows[j]) { return d }
+            }
+            return nil
+        }
+
+        for (i, row) in rows.enumerated() {
+            let low = row.lowercased()
+            // Due date first: "payment due date" also contains "date", and checking
+            // the statement label first would claim the row.
+            if meta.dueDate == nil, let label = dueDateLabels.first(where: { low.contains($0) }) {
+                meta.dueDate = value(at: i, after: label)
+                continue
+            }
+            if meta.statementDate == nil,
+               let label = statementDateLabels.first(where: { low.contains($0) }) {
+                meta.statementDate = value(at: i, after: label)
+            }
+        }
+        return meta
+    }
+
+    /// First date-shaped substring in a fragment of text, resolved to a `Date`.
+    static func firstDate(inText s: String) -> Date? {
+        let patterns = [
+            #"\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}"#,      // 19 JUL 2026
+            #"[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}"#,     // July 19, 2026
+            #"\d{4}-\d{1,2}-\d{1,2}"#,                 // 2026-07-19
+            #"\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}"#      // 19/07/2026
+        ]
+        for p in patterns {
+            guard let r = s.range(of: p, options: .regularExpression) else { continue }
+            if let d = parseDate(String(s[r])) { return d }
+        }
+        return nil
+    }
+
+    // MARK: Foreign currency
+
+    /// ISO codes we accept in a description. A curated list rather than "any three
+    /// capitals", so merchant words like "THE" or "GST" aren't read as currencies.
+    private static let currencyCodes: Set<String> = [
+        "USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF", "CNY", "HKD",
+        "TWD", "KRW", "SGD", "MYR", "THB", "IDR", "PHP", "VND", "INR", "AED",
+        "SAR", "ZAR", "SEK", "NOK", "DKK", "MXN", "BRL", "TRY", "RUB", "PLN"
+    ]
+
+    /// A charge posted in a foreign currency.
+    struct ForeignAmount {
+        let code: String
+        /// Original amount in minor units of `code`.
+        let cents: Int
+        /// The description with the currency fragment removed.
+        let cleanedDescription: String
+    }
+
+    /// Move any foreign-currency fragment out of each description and into the
+    /// dedicated fields. Rows without one are returned untouched.
+    static func annotateForeignAmounts(_ lines: [ParsedLine]) -> [ParsedLine] {
+        lines.map { line in
+            guard let f = foreignAmount(in: line.desc) else { return line }
+            var l = line
+            l.desc = f.cleanedDescription
+            l.foreignCurrency = f.code
+            l.foreignAmountCents = f.cents
+            return l
+        }
+    }
+
+    /// Pull "USD 10.80" / "KRW 775,200.00" out of a description.
+    ///
+    /// The parsers fold this line into the merchant name, which is why rows read
+    /// "KOREAN AIRLINES Seoul KRW 775,200.00". Keeping the original amount lets the
+    /// app show what was actually charged abroad instead of only the converted SGD.
+    static func foreignAmount(in desc: String) -> ForeignAmount? {
+        let pattern = #"\b([A-Z]{3})\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)\b"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(desc.startIndex..., in: desc)
+        for m in re.matches(in: desc, range: range) {
+            guard let cr = Range(m.range(at: 1), in: desc),
+                  let ar = Range(m.range(at: 2), in: desc) else { continue }
+            let code = String(desc[cr])
+            guard currencyCodes.contains(code) else { continue }
+            let raw = String(desc[ar]).replacingOccurrences(of: ",", with: "")
+            guard let v = Double(raw) else { continue }
+            var cleaned = desc
+            if let whole = Range(m.range, in: desc) { cleaned.removeSubrange(whole) }
+            cleaned = cleaned
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+            return ForeignAmount(code: code,
+                                 cents: Money.centsFromDouble(v),
+                                 cleanedDescription: cleaned.isEmpty ? desc : cleaned)
+        }
+        return nil
     }
 
     // MARK: Reconciliation

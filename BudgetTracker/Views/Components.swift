@@ -16,6 +16,11 @@ struct SectionHeader: View {
                 Button(actionLabel, action: action)
                     .font(.subheadline)
                     .foregroundStyle(DS.accentSoft)
+                    // Home shows three "See all" buttons, so a UI test matching on
+                    // the label alone hits whichever comes first — which is how the
+                    // bills test ended up tapping "Spending by category". Derive a
+                    // stable identifier from the section title instead.
+                    .accessibilityIdentifier("seeAll.\(title)")
             }
         }
     }

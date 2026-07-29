@@ -17,6 +17,9 @@ struct AccountDetailView: View {
     @State private var pendingLines: [StatementParser.ParsedLine] = []
     @State private var pendingFileName = ""
     @State private var pendingBank: Bank = .unknown
+    @State private var pendingMeta = StatementParser.StatementMeta()
+    @State private var pendingDeclaredTotal: Int?
+    @State private var pendingReconciled: Bool?
     @State private var showReview = false
     @State private var errorMessage: String?
 
@@ -101,7 +104,11 @@ struct AccountDetailView: View {
         }
         .sheet(isPresented: $showReview) {
             StatementReviewView(fileName: pendingFileName, lines: pendingLines,
-                                detectedBank: pendingBank, preselectedCardID: card.id)
+                                detectedBank: pendingBank,
+                                meta: pendingMeta,
+                                declaredTotalCents: pendingDeclaredTotal,
+                                reconciled: pendingReconciled,
+                                preselectedCardID: card.id)
                 .environmentObject(appState)
         }
         .alert("Import problem", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
@@ -149,13 +156,17 @@ struct AccountDetailView: View {
                 return
             }
             do {
-                let lines = try StatementParser.parse(url: url)
+                let parsed = try StatementParser.parseDetailed(url: url)
+                let lines = parsed.lines
                 let total = lines.filter { $0.amountCents > 0 }.reduce(0) { $0 + $1.amountCents }
                 if total > 0, allStatements.contains(where: { $0.statementTotalCents == total }) {
                     errorMessage = "A statement with the same total (\(Money.string(total))) already exists. Rename the file or delete the existing one first."
                     return
                 }
                 pendingLines = lines; pendingFileName = fileName
+                pendingMeta = parsed.meta
+                pendingDeclaredTotal = parsed.declaredTotalCents
+                pendingReconciled = parsed.reconciled
                 pendingBank = BankDetector.detect(url: url); showReview = true
             } catch { errorMessage = error.localizedDescription }
         }

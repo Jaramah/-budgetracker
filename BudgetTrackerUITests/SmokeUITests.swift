@@ -22,11 +22,13 @@ final class SmokeUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Home"].waitForExistence(timeout: 15), "tab bar never appeared")
         snap(app, "01-Home")
 
+        // The tab bar is Home · Activity · [+] · Cards · Settings. "Budget" is a
+        // segment inside Cards, not a tab — testBudgetSegmentInsideCardsTab covers
+        // it. Listing it here made this test fail on a control that never existed.
         let tabs = [("Activity", "02-Activity"),
-                    ("Budget",   "03-Budget"),
-                    ("Cards",    "04-Cards"),
-                    ("Settings", "05-Settings"),
-                    ("Home",     "06-Home-again")]
+                    ("Cards",    "03-Cards"),
+                    ("Settings", "04-Settings"),
+                    ("Home",     "05-Home-again")]
 
         for (label, name) in tabs {
             let btn = app.buttons[label]

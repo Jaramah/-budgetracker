@@ -20,8 +20,35 @@ final class StatementImport {
     /// Raw `Bank` value detected at import time (for display even if unassigned).
     var detectedBankRaw: String = Bank.unknown.rawValue
 
+    /// The date printed on the statement itself, when the PDF exposed it.
+    /// `importedAt` is when the file was opened, which is often weeks later and is
+    /// no basis for working out which cycle a statement belongs to.
+    var statementDate: Date? = nil
+
+    /// The payment due date the bank printed. Preferred over anything computed
+    /// from the card's due day: it is the issuer's own figure, already accounting
+    /// for weekends and the cycle rolling into the following month.
+    var dueDate: Date? = nil
+
+    /// The total the statement footed its column with, if any.
+    var declaredTotalCents: Int? = nil
+
+    /// Whether the imported charges matched that total. `nil` means the statement
+    /// printed no total to check against — not the same as balancing.
+    var reconciled: Bool? = nil
+
     @Relationship(deleteRule: .cascade, inverse: \StatementLine.statement)
     var lines: [StatementLine]? = []
+
+    /// How the import balanced, for display.
+    enum Reconciliation { case balanced, mismatch(Int), unchecked }
+
+    var reconciliation: Reconciliation {
+        guard let reconciled, let declaredTotalCents else { return .unchecked }
+        if reconciled { return .balanced }
+        let imported = (lines ?? []).filter { $0.isCharge }.reduce(0) { $0 + $1.amountCents }
+        return .mismatch(imported - declaredTotalCents)
+    }
 
     init(
         id: UUID = UUID(),
@@ -58,6 +85,13 @@ final class StatementLine {
     /// Set when the line is linked to a logged Transaction.
     var matchedTransactionID: UUID?
     var statement: StatementImport?
+
+    /// ISO code of the currency the merchant actually billed, for a foreign
+    /// transaction. `amountCents` stays in the card's currency — this is the
+    /// pre-conversion figure, which the parsers used to fold into the description.
+    var foreignCurrency: String? = nil
+    /// Original amount in minor units of `foreignCurrency`.
+    var foreignAmountCents: Int? = nil
 
     init(
         id: UUID = UUID(),
