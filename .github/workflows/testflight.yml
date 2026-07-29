@@ -152,41 +152,58 @@ jobs:
           # rejects the document (invalidPEMDocument) even though the key material
           # is perfectly good. Stripping the armour, discarding all whitespace and
           # re-wrapping at 64 columns makes the step indifferent to how it was pasted.
-          BODY=$(printf '%s' "$ASC_KEY_P8" \
-            | sed -e 's/-----BEGIN PRIVATE KEY-----//g' \
-                  -e 's/-----END PRIVATE KEY-----//g' \
-            | tr -d '[:space:]')
+          RAW=$(mktemp)
 
-          if [ -z "$BODY" ]; then
-            echo "::error::ASC_KEY_P8 has no key material once the PEM armour is stripped."
-            exit 1
+          # Take the FIRST PEM block only. A secret that holds more than one key —
+          # pasted twice, or a file with several blocks — must not be concatenated
+          # into a single body: openssl stops at the first valid ASN.1 structure and
+          # reports success, while CryptoKit reads the whole blob and fails with
+          # invalidASN1Object. That mismatch is exactly what stalled builds 4 and 5.
+          FIRST=$(printf '%s\n' "$ASC_KEY_P8" \
+            | awk '/-----BEGIN/{f=1} f{print} /-----END/{if(f) exit}')
+
+          if [ -n "$FIRST" ]; then
+            printf '%s\n' "$FIRST" > "$RAW"
+          else
+            # No armour at all — the paste flattened it. Rebuild canonical PEM from
+            # the bare base64 so line breaks stop mattering.
+            BODY=$(printf '%s' "$ASC_KEY_P8" | tr -d '[:space:]')
+            if [ -z "$BODY" ]; then
+              echo "::error::ASC_KEY_P8 has no key material."
+              rm -f "$RAW"; exit 1
+            fi
+            {
+              echo "-----BEGIN PRIVATE KEY-----"
+              printf '%s' "$BODY" | fold -w 64
+              echo ""
+              echo "-----END PRIVATE KEY-----"
+            } > "$RAW"
           fi
 
-          {
-            echo "-----BEGIN PRIVATE KEY-----"
-            printf '%s' "$BODY" | fold -w 64
-            echo ""
-            echo "-----END PRIVATE KEY-----"
-          } > "$KEY_PATH"
+          # Let openssl re-emit it. Whatever came in, what lands at KEY_PATH is one
+          # canonical key with nothing trailing it — which is what CryptoKit needs.
+          if ! openssl pkey -in "$RAW" -out "$KEY_PATH" 2>/dev/null; then
+            echo "::error::ASC_KEY_P8 is not a valid private key. Re-copy the .p8 with: cat AuthKey_XXXX.p8 | pbcopy"
+            echo "Diagnostics (no key material):"
+            echo "  secret length     : ${#ASC_KEY_P8}"
+            echo "  BEGIN markers     : $(printf '%s\n' "$ASC_KEY_P8" | grep -c -- '-----BEGIN' || true)"
+            rm -f "$RAW"; exit 1
+          fi
+          rm -f "$RAW"
           chmod 600 "$KEY_PATH"
 
-          # Validate before handing it to xcodebuild, whose own error names the
-          # symptom but not the cause. Shape only — never the key material.
-          if ! openssl pkey -in "$KEY_PATH" -noout 2>/dev/null; then
-            echo "::error::ASC_KEY_P8 is not a valid private key. Re-copy the .p8 (cat AuthKey_XXXX.p8 | pbcopy) and update the secret."
-            echo "Diagnostics (no secret content):"
-            echo "  base64 body length : ${#BODY}   (expect ~200 for an App Store Connect key)"
-            echo "  rebuilt line count : $(wc -l < "$KEY_PATH")"
-            exit 1
-          fi
-          # App Store Connect keys are always EC P-256 (prime256v1). Anything else
-          # means the wrong file was pasted — an SSH key, an APNs key from a
-          # different section, or a self-generated key.
+          # App Store Connect keys are always EC P-256 (prime256v1) with a ~184-char
+          # body. A different curve means a different key was pasted entirely.
+          CLEAN=$(sed -e '/-----/d' "$KEY_PATH" | tr -d '[:space:]')
           CURVE=$(openssl pkey -in "$KEY_PATH" -noout -text 2>/dev/null \
             | grep -i 'NIST CURVE\|ASN1 OID' | head -1 | tr -d ' ')
-          echo "Private key parsed OK — ${CURVE:-curve unknown}, body length ${#BODY}"
+          BLOCKS=$(printf '%s\n' "$ASC_KEY_P8" | grep -c -- '-----BEGIN' || true)
+          echo "Key installed — ${CURVE:-curve unknown}, canonical body ${#CLEAN} chars (expect ~184)"
+          if [ "$BLOCKS" -gt 1 ]; then
+            echo "::warning::ASC_KEY_P8 contains $BLOCKS PEM blocks; using the first. Update the secret to hold exactly one .p8."
+          fi
           if ! openssl pkey -in "$KEY_PATH" -noout -text 2>/dev/null | grep -qi 'prime256v1\|P-256'; then
-            echo "::error::The key parses but is not EC P-256. App Store Connect keys always are — check you pasted the App Store Connect API key, not an APNs or self-generated key."
+            echo "::error::The key parses but is not EC P-256. Check you pasted the App Store Connect API key, not an APNs or self-generated key."
             exit 1
           fi
           echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
