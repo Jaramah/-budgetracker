@@ -84,7 +84,17 @@ enum LineStatementParser {
         // "Amount to Pay" / per-card totals, and the PREVIOUS BALANCE figure — are not
         // transaction amounts. Counting them shifted the pairing just as badly, so
         // collection is gated on having entered the table and skips known totals.
-        var inTable = false
+        //
+        // The gate only applies when the statement actually prints a recognisable
+        // column header. Not every layout does, and waiting for a header that never
+        // arrives would collect nothing at all — so with no header we start inside
+        // the table and behave as before.
+        let hasHeader = physical.contains { l in
+            let low = l.lowercased()
+            return low.contains("description of transaction")
+                || resumeZone.contains(where: { low.contains($0) })
+        }
+        var inTable = !hasHeader
         var skipNextAmount = false
 
         func flush() {
@@ -105,14 +115,22 @@ enum LineStatementParser {
                 || resumeZone.contains(where: { low.contains($0) }) {
                 inTable = true
             }
+            // A total label only "owns" the next bare amount when it doesn't already
+            // carry its own figure. "SUB TOTAL 1,417.19" is self-contained; arming the
+            // skip there would swallow the first real amount of the following section.
+            let carriesItsOwnFigure = line.split(separator: " ")
+                .contains { parseAmount(String($0)) != nil }
+
             if low.contains("sub total") || low.contains("sub-total")
                 || low.contains("total balance") || low.contains("end of transaction") {
                 // The figure that follows a total label is the total itself, not a
                 // transaction — swallow it so it can't seed the next section's block.
-                flush(); skipNextAmount = true; continue
+                flush(); skipNextAmount = !carriesItsOwnFigure; continue
             }
             if low.hasPrefix("ref no") { continue }
-            if low.contains("previous balance") { skipNextAmount = true; continue }
+            if low.contains("previous balance") {
+                skipNextAmount = !carriesItsOwnFigure; continue
+            }
 
             // A bare amount line contributes to the block. UOB and DBS print a
             // standalone credit as *two* tokens ("2,040.69 CR"), which the old

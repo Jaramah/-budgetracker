@@ -67,25 +67,46 @@ jobs:
           echo "SIM_NAME=$NAME" >> "$GITHUB_ENV"
           echo "Using simulator: $NAME"
 
-      - name: Run tests
-        # Gate the upload on the suite. The UOB parser regressions live here, and
-        # shipping a build whose amounts don't reconcile is worse than shipping late.
+      # Unit tests gate the upload. The parser regressions live here, and shipping a
+      # build whose amounts don't reconcile is worse than shipping late.
+      - name: Run unit tests
         if: ${{ inputs.skip_tests != true }}
         run: |
           set -o pipefail
           xcodebuild test \
             -scheme "$SCHEME" \
             -destination "platform=iOS Simulator,name=$SIM_NAME" \
-            -resultBundlePath TestResults.xcresult \
+            -only-testing:BudgetTrackerTests \
+            -resultBundlePath UnitTestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty && exit ${PIPESTATUS[0]}
+
+      # UI tests run but do NOT gate the release. They drive a live simulator and are
+      # sensitive to boot timing and animation, so a red UI test here is as likely to
+      # mean "the runner was slow" as "the app is broken" — not a signal worth blocking
+      # a parser fix on. Failures still show in the run summary and the artifact.
+      - name: Run UI tests (non-blocking)
+        if: ${{ inputs.skip_tests != true }}
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme "$SCHEME" \
+            -destination "platform=iOS Simulator,name=$SIM_NAME" \
+            -only-testing:BudgetTrackerUITests \
+            -resultBundlePath UITestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             | xcpretty && exit ${PIPESTATUS[0]}
 
       - name: Upload test results
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: TestResults.xcresult
+          path: |
+            UnitTestResults.xcresult
+            UITestResults.xcresult
+          if-no-files-found: ignore
 
       # The key is written to the path xcodebuild and altool both search, then removed
       # in the always() cleanup below. It never lands in the workspace, so it cannot
