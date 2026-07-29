@@ -16,6 +16,7 @@ struct SettingsView: View {
     @Query private var transactions: [Transaction]
 
     // Persisted settings.
+    @EnvironmentObject private var theme: ThemeManager
     @AppStorage("currencyCode") private var currencyCode: String = "SGD"
     @AppStorage("appLockEnabled") private var appLockEnabled: Bool = false
     @AppStorage("dueRemindersEnabled") private var dueRemindersEnabled: Bool = true
@@ -43,6 +44,7 @@ struct SettingsView: View {
                 VStack(spacing: 18) {
                     proCard
                     generalCard
+                    appearanceCard
                     securityCard
                     notificationsCard
                     manageCard
@@ -156,6 +158,24 @@ struct SettingsView: View {
             SettingsRow(icon: "dollarsign.circle.fill", tint: DS.accent,
                         title: "Currency", value: currencyCode) {
                 showCurrencyPicker = true
+            }
+        }
+    }
+
+    // MARK: - Appearance
+
+    /// Theme picker. Lives on the Settings root rather than a pushed screen: the
+    /// shell re-identifies its subtree on a theme change, which resets navigation
+    /// depth, so choosing from here means you land back on this exact screen.
+    private var appearanceCard: some View {
+        SettingsCard(title: "Appearance") {
+            VStack(spacing: 10) {
+                ForEach(Theme.all) { t in
+                    ThemeOptionRow(theme: t, isSelected: t.id == theme.current.id) {
+                        Haptics.tap()
+                        withAnimation(.easeInOut(duration: 0.25)) { theme.select(t) }
+                    }
+                }
             }
         }
     }

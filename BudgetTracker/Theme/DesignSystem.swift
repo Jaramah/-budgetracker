@@ -1,41 +1,45 @@
 import SwiftUI
 
-/// Design system for the "Aurora" theme — a dark fintech look matching the
-/// reference: near-black background, elevated glass cards with hairline white
-/// borders, a blue primary accent, and big bold money figures as the hero.
+/// Design tokens for the current theme.
+///
+/// These were constants for a single hard-coded dark look. They are now computed
+/// from `ThemeManager.shared.current`, so switching a theme repaints the whole app
+/// without touching any of the 300-odd call sites that read `DS.something`.
+///
+/// Reading a static does not itself make SwiftUI re-render: a view only redraws
+/// when something it observes changes. `RootView` observes `ThemeManager` and
+/// re-identifies the screen subtree on change, which is what actually repaints.
 enum DS {
+    private static var t: Theme { ThemeManager.shared.current }
+
     // MARK: Backgrounds
-    static let bgBase     = Color(hex: "#05060A")   // page background (near-black)
-    static let bgCard     = Color(hex: "#111420")   // elevated card
-    static let bgCardHi   = Color(hex: "#171B2B")   // higher elevation / pressed
-    static let hairline   = Color.white.opacity(0.08)
-    static let hairlineHi  = Color.white.opacity(0.14)
+    static var bgBase: Color     { Color(hex: t.bgBase) }
+    static var bgCard: Color     { Color(hex: t.bgCard) }
+    static var bgCardHi: Color   { Color(hex: t.bgCardHi) }
+    static var hairline: Color   { Color(hex: t.hairline) }
+    static var hairlineHi: Color { Color(hex: t.hairlineHi) }
 
     // MARK: Accents
-    static let accent     = Color(hex: "#3B82F6")   // primary blue
-    static let accentSoft = Color(hex: "#60A5FA")   // lighter blue
-    static let accentDim  = Color(hex: "#3B82F6").opacity(0.18)
+    static var accent: Color     { Color(hex: t.accent) }
+    static var accentSoft: Color { Color(hex: t.accentSoft) }
+    static var accentDim: Color  { Color(hex: t.accent).opacity(0.18) }
 
     // MARK: Money semantics
-    static let moneyIn    = Color(hex: "#34D399")   // income / positive (green)
-    static let moneyOut   = Color(hex: "#F87171")   // spend / negative (red)
-    static let warning    = Color(hex: "#FBBF24")   // over budget / due soon (amber)
+    static var moneyIn: Color  { Color(hex: t.moneyIn) }
+    static var moneyOut: Color { Color(hex: t.moneyOut) }
+    static var warning: Color  { Color(hex: t.warning) }
 
     // MARK: Text
-    static let inkPrimary   = Color.white.opacity(0.95)
-    static let inkSecondary = Color.white.opacity(0.70)
-    static let inkTertiary  = Color.white.opacity(0.45)
+    static var inkPrimary: Color   { Color(hex: t.inkPrimary) }
+    static var inkSecondary: Color { Color(hex: t.inkSecondary) }
+    static var inkTertiary: Color  { Color(hex: t.inkTertiary) }
 
-    // MARK: Metrics
+    // MARK: Metrics — shape is not themed, only colour.
     static let corner: CGFloat = 18
     static let cardPadding: CGFloat = 16
 
     /// A palette to color category donut slices / chips when a category has no color.
-    static let categoryPalette: [Color] = [
-        Color(hex: "#3B82F6"), Color(hex: "#8B5CF6"), Color(hex: "#EC4899"),
-        Color(hex: "#F59E0B"), Color(hex: "#10B981"), Color(hex: "#06B6D4"),
-        Color(hex: "#F43F5E"), Color(hex: "#A3E635"), Color(hex: "#FB923C")
-    ]
+    static var categoryPalette: [Color] { t.categoryPalette.map { Color(hex: $0) } }
 }
 
 // MARK: - Color(hex:) — required by models (Category, CreditCardAccount) and theme.

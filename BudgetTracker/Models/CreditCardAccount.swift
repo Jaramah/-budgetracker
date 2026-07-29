@@ -73,4 +73,76 @@ final class CreditCardAccount {
     }
 
     var hasDueDay: Bool { (1...28).contains(paymentDueDay) }
+    var hasStatementDay: Bool { (1...28).contains(statementDay) }
+
+    // MARK: - Due dates
+    //
+    // `paymentDueDay` is a day-of-month, which is ambiguous on its own — the app
+    // previously showed it as a bare number ("Due day: 7") and scheduled a
+    // reminder on the 7th of every month, with no link to the statement cycle.
+    //
+    // A statement issued 19 Jul with a due day of 7 is due 7 **August**, not
+    // 7 July: the due date lands in the month *after* the statement whenever the
+    // due day is on or before the statement day. Resolving the due date as "the
+    // first occurrence of the due day strictly after the statement date" gets
+    // that right, and also handles the other shape correctly — a statement on
+    // the 5th with a due day of the 25th is due later the *same* month.
+
+    /// The payment due date for a statement issued on `statementDate`.
+    ///
+    /// Never returns a date on or before `statementDate`, so a due day that has
+    /// already passed in the statement month rolls into the next one. Returns
+    /// `nil` if this card has no due day configured.
+    func dueDate(forStatementDate statementDate: Date) -> Date? {
+        guard hasDueDay else { return nil }
+        let cal = DateHelpers.calendar
+        let cutoff = cal.startOfDay(for: statementDate)
+        // Two candidates are always enough: the statement's own month, then the
+        // next one. The due day can never be more than one month away.
+        for offset in 0...1 {
+            guard let base = cal.date(byAdding: .month, value: offset, to: statementDate),
+                  let candidate = dueDate(inMonthOf: base, cal: cal),
+                  cal.startOfDay(for: candidate) > cutoff
+            else { continue }
+            return candidate
+        }
+        return nil
+    }
+
+    /// The next payment due date at or after `date` — what the card list and
+    /// reminders should show when there's no specific statement in hand.
+    func nextDueDate(asOf date: Date = .now) -> Date? {
+        guard hasDueDay else { return nil }
+        let cal = DateHelpers.calendar
+        let today = cal.startOfDay(for: date)
+        for offset in 0...1 {
+            guard let base = cal.date(byAdding: .month, value: offset, to: date),
+                  let candidate = dueDate(inMonthOf: base, cal: cal),
+                  cal.startOfDay(for: candidate) >= today
+            else { continue }
+            return candidate
+        }
+        return nil
+    }
+
+    /// Days remaining until the next due date; negative is impossible since
+    /// `nextDueDate` never looks backwards. `nil` when no due day is set.
+    func daysUntilDue(asOf date: Date = .now) -> Int? {
+        let cal = DateHelpers.calendar
+        guard let due = nextDueDate(asOf: date) else { return nil }
+        return cal.dateComponents([.day],
+                                  from: cal.startOfDay(for: date),
+                                  to: cal.startOfDay(for: due)).day
+    }
+
+    /// The due day pinned into the month containing `date`, clamped to that
+    /// month's length so a due day of 31 doesn't vanish in February. Set to 09:00
+    /// to match the reminder fire time.
+    private func dueDate(inMonthOf date: Date, cal: Calendar) -> Date? {
+        var comps = cal.dateComponents([.year, .month], from: date)
+        let daysInMonth = cal.range(of: .day, in: .month, for: date)?.count ?? 28
+        comps.day = min(paymentDueDay, daysInMonth)
+        comps.hour = 9
+        return cal.date(from: comps)
+    }
 }

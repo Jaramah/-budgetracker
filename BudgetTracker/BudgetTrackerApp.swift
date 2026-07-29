@@ -7,6 +7,7 @@ struct BudgetTrackerApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var lock = AppLock()
     @StateObject private var store = ProStore()
+    @StateObject private var theme = ThemeManager.shared
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -49,6 +50,7 @@ struct BudgetTrackerApp: App {
                 RootView()
                     .environmentObject(appState)
                     .environmentObject(store)
+                    .environmentObject(theme)
                     .task {
                         await SampleData.seedIfNeeded(container.mainContext)
                         DemoSeed.seedIfNeeded(container.mainContext)   // no-op unless DEMO_SEED=1
@@ -71,7 +73,9 @@ struct BudgetTrackerApp: App {
                         .transition(.opacity)
                 }
             }
-            .preferredColorScheme(.dark)
+            // Was hard-coded to .dark. Light themes need the system chrome —
+            // status bar, keyboards, pickers — to follow the palette too.
+            .preferredColorScheme(theme.current.colorScheme)
             .tint(DS.accent)
             .onAppear { lock.authenticate() }
         }

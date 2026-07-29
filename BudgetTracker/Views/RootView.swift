@@ -6,6 +6,9 @@ import SwiftData
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var store: ProStore
+    /// Observed so a theme change re-renders the shell — the tab bar and add
+    /// button read `DS` colours directly from this view's body.
+    @EnvironmentObject private var theme: ThemeManager
     @State private var tab = 0
     @State private var showAdd = false
     @State private var showBills = false
@@ -42,6 +45,13 @@ struct RootView: View {
                 default: SettingsView()
                 }
             }
+            // Re-identify the screen subtree when the theme changes so every child
+            // rebuilds and picks up the new `DS` colours. Deliberately placed here
+            // rather than on `RootView` itself: `tab` is @State on this view, so
+            // keeping the id inside preserves which tab you're on. Navigation depth
+            // within a tab does reset, which is why the picker lives on the Settings
+            // root screen — you land back exactly where you chose from.
+            .id(theme.current.id)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             VStack(spacing: 0) {

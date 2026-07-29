@@ -35,8 +35,21 @@ struct AccountDetailView: View {
                         Text(card.displayName).font(.headline).foregroundStyle(DS.inkPrimary)
                         HStack(spacing: 12) {
                             infoPill("Balance", Money.string(balance))
-                            if card.hasDueDay { infoPill("Due day", "\(card.paymentDueDay)") }
+                            // Show the resolved date, not the bare day-of-month.
+                            // "Due day 7" is ambiguous — a statement cut on the
+                            // 19th is due the 7th of the *following* month, and
+                            // the number alone hides that entirely.
+                            if let due = card.nextDueDate() {
+                                infoPill("Next due", DateHelpers.mediumDate(due))
+                            }
                             if card.statementDay > 0 { infoPill("Stmt day", "\(card.statementDay)") }
+                        }
+                        if let days = card.daysUntilDue() {
+                            Text(days == 0 ? "Due today"
+                                 : days == 1 ? "Due tomorrow"
+                                 : "Due in \(days) days")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(days <= 3 ? DS.warning : DS.inkTertiary)
                         }
                     }
                 }
