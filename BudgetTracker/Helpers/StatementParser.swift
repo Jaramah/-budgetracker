@@ -71,12 +71,19 @@ enum StatementParser {
             // are batched after the transactions rather than inline. Returns [] unless
             // that layout is detected, so it only wins for statements shaped that way.
             let block = LineStatementParser.parseBlock(url: url)
-            // Prefer the line parser on ties (it's the clean-text default); coord and
-            // block only win when they strictly score higher.
-            var best = lines
-            if score(coord) > score(best) { best = coord }
-            if score(block) > score(best) { best = block }
-            if !best.isEmpty { return best }
+            // Selection is in two rounds. `score` only ever looked at *descriptions*,
+            // so a parser could emit perfect merchant names against completely wrong
+            // amounts and still win — which is exactly how UOB shipped mispaired rows.
+            // Round 1 therefore keeps only the candidates whose debits reconcile with
+            // the total the bank itself printed; round 2 falls back to the old
+            // description score when the statement gives us nothing to check against.
+            let declared = declaredTotalCents(in: text)
+            let candidates = [lines, coord, block].filter { !$0.isEmpty }
+            let reconciled = candidates.filter { reconciles($0, declared: declared) }
+            let pool = reconciled.isEmpty ? candidates : reconciled
+            // Ties go to the earliest candidate, preserving the old preference order
+            // (line parser first, then coord, then block).
+            if let best = pool.max(by: { score($0) < score($1) }) { return best }
             // Fallback: naive single-line text scan for unusual layouts.
             let fallback = parsePDFText(text)
             if fallback.isEmpty { throw ParseError.nothingFound }
@@ -99,6 +106,82 @@ enum StatementParser {
             let hasWord = d.range(of: #"\p{L}{3,}"#, options: .regularExpression) != nil
             return acc + (hasWord ? 2 : -1)
         }
+    }
+
+    // MARK: Reconciliation
+
+    /// Sum of the per-section totals the statement itself prints ("SUB TOTAL"), in
+    /// cents — or `nil` when the statement prints none.
+    ///
+    /// This is the one piece of ground truth a bank hands us for free: whatever we
+    /// parse, the debits have to add up to the figure the bank footed the column
+    /// with. A parser can mis-associate every amount and still produce plausible
+    /// rows (UOB's block layout did exactly that), but it cannot do so *and* hit
+    /// the printed total.
+    ///
+    /// "TOTAL BALANCE FOR …" is deliberately ignored: it repeats the sub-total for
+    /// single-section cards, and double-counting it would make every parse fail.
+    static func declaredTotalCents(in text: String) -> Int? {
+        let rows = text
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        var total: Int? = nil
+        // The figure can sit on the label's own line ("SUB TOTAL   2,406.52") or on a
+        // following line when the text layer splits label from column. Allow a short
+        // look-ahead rather than requiring one shape.
+        var lookahead = 0
+
+        for row in rows {
+            let low = row.lowercased()
+            if low.contains("sub total") || low.contains("sub-total") || low.contains("subtotal") {
+                if let c = lastAmountCents(in: row) {
+                    total = (total ?? 0) + c
+                    lookahead = 0
+                } else {
+                    lookahead = 3
+                }
+                continue
+            }
+            if lookahead > 0 {
+                if let c = lastAmountCents(in: row) {
+                    total = (total ?? 0) + c
+                    lookahead = 0
+                } else {
+                    lookahead -= 1
+                }
+            }
+        }
+        return total
+    }
+
+    /// Whether a candidate parse's debits add up to what the bank printed. Returns
+    /// `true` when there's nothing to check against, so statements without a printed
+    /// sub-total are never rejected — this can only ever *break* ties, not invent them.
+    static func reconciles(_ lines: [ParsedLine], declared: Int?) -> Bool {
+        guard let declared, declared > 0 else { return true }
+        let debits = lines.filter { $0.amountCents > 0 }.reduce(0) { $0 + $1.amountCents }
+        // A cent of slack absorbs half-up vs half-even rounding in the parsers.
+        return abs(debits - declared) <= 1
+    }
+
+    /// Rightmost monetary token on a line, in cents; `nil` if there isn't one.
+    /// Credits ("2,040.69 CR") are rejected — a sub-total is never a credit, and
+    /// accepting one would let a payment row masquerade as the column total.
+    private static func lastAmountCents(in line: String) -> Int? {
+        let up = line.uppercased()
+        guard !up.hasSuffix("CR") else { return nil }
+        let tokens = line.split(separator: " ").map(String.init)
+        for t in tokens.reversed() {
+            guard t.range(of: #"^\(?[+\-]?[\d,]+\.\d{2}\)?$"#, options: .regularExpression) != nil,
+                  let v = Double(t.replacingOccurrences(of: #"[^\d.]"#, with: "",
+                                                       options: .regularExpression))
+            else { continue }
+            return Int((v * 100).rounded())
+        }
+        return nil
     }
 
     // MARK: CSV

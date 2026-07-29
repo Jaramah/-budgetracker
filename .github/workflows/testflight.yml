@@ -1,0 +1,182 @@
+name: TestFlight
+
+# Deliberately NOT triggered by `pull_request`. This repository is public, and a
+# workflow that runs fork PRs with secrets attached can be made to leak them. Only
+# a tag pushed by a collaborator, or a manual dispatch, can reach the signing key.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: "Archive without running tests (emergency builds only)"
+        type: boolean
+        default: false
+      build_offset:
+        description: "Added to the run number to form the build number. Raise it if a manual upload ever collides."
+        required: false
+        default: "1"
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false   # never kill an in-flight upload
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    env:
+      SCHEME: BudgetTracker
+      BUILD_OFFSET: ${{ inputs.build_offset || '1' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The build number must be unique per upload or App Store Connect rejects the
+      # build. Deriving it from the run number makes that automatic and monotonic —
+      # no hand-editing, and no silent reset when xcodegen regenerates the project.
+      # Offset by 1 because build 1 is already on TestFlight.
+      - name: Compute build number
+        run: |
+          echo "BUILD_NUMBER=$(( ${{ github.run_number }} + BUILD_OFFSET ))" >> "$GITHUB_ENV"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        # The build number is passed to xcodebuild below rather than patched into
+        # project.yml, so there's no sed dialect to get wrong and project.yml stays
+        # the source of truth for everything else.
+        run: |
+          xcodegen generate
+          echo "Building $SCHEME build $BUILD_NUMBER"
+
+      - name: Pick an available simulator
+        # Hardcoding a device name breaks every time GitHub rolls the Xcode image,
+        # so ask the runner what it actually has.
+        run: |
+          NAME=$(xcrun simctl list devices available \
+            | grep -oE 'iPhone [0-9]+( Pro)?( Max)?' | head -1)
+          if [ -z "$NAME" ]; then
+            echo "::error::No iPhone simulator available on this runner"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "SIM_NAME=$NAME" >> "$GITHUB_ENV"
+          echo "Using simulator: $NAME"
+
+      - name: Run tests
+        # Gate the upload on the suite. The UOB parser regressions live here, and
+        # shipping a build whose amounts don't reconcile is worse than shipping late.
+        if: ${{ inputs.skip_tests != true }}
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme "$SCHEME" \
+            -destination "platform=iOS Simulator,name=$SIM_NAME" \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty && exit ${PIPESTATUS[0]}
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults.xcresult
+
+      # The key is written to the path xcodebuild and altool both search, then removed
+      # in the always() cleanup below. It never lands in the workspace, so it cannot
+      # be swept up by an artifact upload.
+      - name: Install App Store Connect API key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          if [ -z "$ASC_KEY_P8" ] || [ -z "$ASC_KEY_ID" ]; then
+            echo "::error::ASC_KEY_P8 / ASC_KEY_ID secrets are not set."
+            exit 1
+          fi
+          mkdir -p ~/.appstoreconnect/private_keys
+          KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          printf '%s' "$ASC_KEY_P8" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      # Cloud signing: -allowProvisioningUpdates plus the API key lets Xcode create
+      # and download the certificate and profile on the runner. No fastlane match,
+      # no checked-in certificates, nothing to rotate by hand.
+      - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -scheme "$SCHEME" \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/BudgetTracker.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            | xcpretty && exit ${PIPESTATUS[0]}
+
+      - name: Export IPA
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          cat > ExportOptions.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>export</string>
+            <key>teamID</key><string>V5LHDBRQYB</string>
+            <key>uploadSymbols</key><true/>
+            <key>signingStyle</key><string>automatic</string>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath build/BudgetTracker.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          # Resolve the path first: passing a glob straight to altool sends it the
+          # literal pattern when the shell doesn't expand it, and a confusing failure.
+          IPA=$(find build/export -maxdepth 1 -name '*.ipa' | head -1)
+          if [ -z "$IPA" ]; then
+            echo "::error::No .ipa was produced by the export step"
+            exit 1
+          fi
+          echo "Uploading $IPA as build $BUILD_NUMBER"
+          xcrun altool --upload-app -f "$IPA" -t ios \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
+
+      - name: Remove API key
+        if: always()
+        run: rm -rf ~/.appstoreconnect/private_keys
+
+      - name: Keep the IPA
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BudgetTracker-build-${{ github.run_number }}
+          path: build/export/*.ipa
+          retention-days: 14

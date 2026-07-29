@@ -13,7 +13,10 @@ packages:
 settings:
   base:
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    # Build number lives HERE, not in the Xcode UI — the .xcodeproj is generated
+    # by xcodegen and gitignored, so editing it in Xcode is silently reset on the
+    # next `xcodegen generate`. Build 1 is on TestFlight; bump this every upload.
+    CURRENT_PROJECT_VERSION: "2"
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: "V5LHDBRQYB"
     CODE_SIGN_STYLE: Automatic

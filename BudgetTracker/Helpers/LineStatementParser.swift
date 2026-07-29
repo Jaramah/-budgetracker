@@ -72,30 +72,64 @@ enum LineStatementParser {
         guard maxRun >= 3 else { return [] }
 
         var out: [StatementParser.ParsedLine] = []
-        var awaiting: [(date: Date, desc: String, low: Bool)] = []  // debits pending an amount
-        var amounts: [Int] = []                                     // block amounts (debits), in order
+        var awaiting: [(date: Date, desc: String, low: Bool)] = []  // transactions pending an amount
+        // Credits stay in this array as position-holders and are discarded *after*
+        // pairing, never before. Dropping them here was the bug: a payment row
+        // ("PAYMT THRU E-BANK … 2,040.69 CR") still lands in `awaiting`, so removing
+        // its amount desynchronised the two arrays and shifted every amount below it
+        // onto the wrong merchant — silently, with no low-confidence flag.
+        var amounts: [(cents: Int, credit: Bool)] = []
         var inlineEntries = 0, noInlineEntries = 0
+        // Amounts printed *outside* the transaction table — the summary panel's
+        // "Amount to Pay" / per-card totals, and the PREVIOUS BALANCE figure — are not
+        // transaction amounts. Counting them shifted the pairing just as badly, so
+        // collection is gated on having entered the table and skips known totals.
+        var inTable = false
+        var skipNextAmount = false
 
         func flush() {
             for (i, t) in awaiting.enumerated() where i < amounts.count {
+                let a = amounts[i]
+                if a.credit { continue }   // paired for position, then dropped
                 out.append(StatementParser.ParsedLine(
-                    date: t.date, desc: t.desc, amountCents: amounts[i], lowConfidence: t.low))
+                    date: t.date, desc: t.desc, amountCents: a.cents, lowConfidence: t.low))
             }
             awaiting.removeAll(); amounts.removeAll()
         }
 
         for line in physical {
             let low = line.lowercased()
+            // The column header marks the start of the transaction table. Until we've
+            // seen one, every amount on the page belongs to the summary panel.
+            if low.contains("description of transaction")
+                || resumeZone.contains(where: { low.contains($0) }) {
+                inTable = true
+            }
             if low.contains("sub total") || low.contains("sub-total")
                 || low.contains("total balance") || low.contains("end of transaction") {
-                flush(); continue
+                // The figure that follows a total label is the total itself, not a
+                // transaction — swallow it so it can't seed the next section's block.
+                flush(); skipNextAmount = true; continue
             }
             if low.hasPrefix("ref no") { continue }
+            if low.contains("previous balance") { skipNextAmount = true; continue }
 
-            // A bare amount line contributes to the block (skip credit amounts).
+            // A bare amount line contributes to the block. UOB and DBS print a
+            // standalone credit as *two* tokens ("2,040.69 CR"), which the old
+            // `toks.count == 1` test rejected outright — so the credit never took a
+            // slot in the block, while its transaction still sat in `awaiting`. That
+            // one-slot desync is what walked every amount onto the wrong merchant.
             let toks = line.split(separator: " ").map(String.init)
-            if toks.count == 1, let (c, credit) = parseAmount(toks[0]) {
-                if !credit { amounts.append(c) }
+            var amountToks = toks
+            var trailingCredit = false
+            if amountToks.count == 2, let last = amountToks.last?.uppercased(),
+               last == "CR" || last == "DR" {
+                trailingCredit = (last == "CR")
+                amountToks.removeLast()
+            }
+            if amountToks.count == 1, let (c, credit) = parseAmount(amountToks[0]) {
+                if skipNextAmount { skipNextAmount = false; continue }
+                if inTable { amounts.append((c, credit || trailingCredit)) }
                 continue
             }
 

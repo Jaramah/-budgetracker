@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The app shows AdMob banners and requests ATT, so it participates in
+	     tracking as Apple defines it. Pro users see no ads, but the manifest
+	     must describe the app's maximum behaviour, not the Pro path. -->
+	<key>NSPrivacyTracking</key>
+	<true/>
+
+	<!-- Left empty deliberately: the app makes no network calls of its own.
+	     Every ad request originates inside the Google Mobile Ads SDK, which
+	     ships its own PrivacyInfo.xcprivacy declaring its domains. Apple merges
+	     the two at build time. Adding Google's domains here would double-count. -->
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array>
+		<!-- IDFA, read by the AdMob SDK for ad attribution once ATT is granted.
+		     Statement data, transactions and balances never leave the device
+		     (SwiftData, local store only), so nothing financial is declared. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeDeviceID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeThirdPartyAdvertising</string>
+			</array>
+		</dict>
+	</array>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<!-- @AppStorage / UserDefaults across 8 files (AppLock, ProStore,
+		     AppReview, Money, PaymentReminderScheduler, TransactionMatcher,
+		     SettingsView, StatementReviewView). CA92.1 = data accessible only
+		     to the app itself, which is the case here — no App Group, no
+		     shared suite. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
