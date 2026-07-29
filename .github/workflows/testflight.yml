@@ -115,9 +115,33 @@ jobs:
         env:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           if [ -z "$ASC_KEY_P8" ] || [ -z "$ASC_KEY_ID" ]; then
             echo "::error::ASC_KEY_P8 / ASC_KEY_ID secrets are not set."
+            exit 1
+          fi
+
+          # Secrets routinely pick up a trailing newline or stray spaces when pasted.
+          # xcodebuild reports that as "Invalid authentication key credential", which
+          # points at the .p8 and sends you looking in the wrong place — so trim all
+          # three and export the clean values for every later step.
+          ASC_KEY_ID=$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')
+          ASC_ISSUER_ID=$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]')
+          echo "ASC_KEY_ID=$ASC_KEY_ID" >> "$GITHUB_ENV"
+          echo "ASC_ISSUER_ID=$ASC_ISSUER_ID" >> "$GITHUB_ENV"
+
+          # Shape checks only — never the values themselves.
+          echo "Credential shapes:"
+          echo "  ASC_KEY_ID    length ${#ASC_KEY_ID} (expect 10)"
+          echo "  ASC_ISSUER_ID length ${#ASC_ISSUER_ID} (expect 36)"
+          if ! printf '%s' "$ASC_KEY_ID" | grep -qE '^[A-Z0-9]{10}$'; then
+            echo "::error::ASC_KEY_ID is not a 10-character App Store Connect key ID. Copy the KEY ID column from Users and Access > Integrations."
+            exit 1
+          fi
+          if ! printf '%s' "$ASC_ISSUER_ID" \
+              | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+            echo "::error::ASC_ISSUER_ID is not a UUID. Copy the Issuer ID shown above the key table."
             exit 1
           fi
           mkdir -p ~/.appstoreconnect/private_keys
@@ -155,7 +179,16 @@ jobs:
             echo "  rebuilt line count : $(wc -l < "$KEY_PATH")"
             exit 1
           fi
-          echo "Private key parsed OK: $(openssl pkey -in "$KEY_PATH" -noout -text 2>/dev/null | head -1)"
+          # App Store Connect keys are always EC P-256 (prime256v1). Anything else
+          # means the wrong file was pasted — an SSH key, an APNs key from a
+          # different section, or a self-generated key.
+          CURVE=$(openssl pkey -in "$KEY_PATH" -noout -text 2>/dev/null \
+            | grep -i 'NIST CURVE\|ASN1 OID' | head -1 | tr -d ' ')
+          echo "Private key parsed OK — ${CURVE:-curve unknown}, body length ${#BODY}"
+          if ! openssl pkey -in "$KEY_PATH" -noout -text 2>/dev/null | grep -qi 'prime256v1\|P-256'; then
+            echo "::error::The key parses but is not EC P-256. App Store Connect keys always are — check you pasted the App Store Connect API key, not an APNs or self-generated key."
+            exit 1
+          fi
           echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
 
       # Cloud signing: -allowProvisioningUpdates plus the API key lets Xcode create
