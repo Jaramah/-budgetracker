@@ -122,8 +122,40 @@ jobs:
           fi
           mkdir -p ~/.appstoreconnect/private_keys
           KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
-          printf '%s' "$ASC_KEY_P8" > "$KEY_PATH"
+
+          # Rebuild canonical PEM from whatever shape the secret was pasted in.
+          # Pasting a .p8 commonly flattens the line breaks, and CryptoKit then
+          # rejects the document (invalidPEMDocument) even though the key material
+          # is perfectly good. Stripping the armour, discarding all whitespace and
+          # re-wrapping at 64 columns makes the step indifferent to how it was pasted.
+          BODY=$(printf '%s' "$ASC_KEY_P8" \
+            | sed -e 's/-----BEGIN PRIVATE KEY-----//g' \
+                  -e 's/-----END PRIVATE KEY-----//g' \
+            | tr -d '[:space:]')
+
+          if [ -z "$BODY" ]; then
+            echo "::error::ASC_KEY_P8 has no key material once the PEM armour is stripped."
+            exit 1
+          fi
+
+          {
+            echo "-----BEGIN PRIVATE KEY-----"
+            printf '%s' "$BODY" | fold -w 64
+            echo ""
+            echo "-----END PRIVATE KEY-----"
+          } > "$KEY_PATH"
           chmod 600 "$KEY_PATH"
+
+          # Validate before handing it to xcodebuild, whose own error names the
+          # symptom but not the cause. Shape only — never the key material.
+          if ! openssl pkey -in "$KEY_PATH" -noout 2>/dev/null; then
+            echo "::error::ASC_KEY_P8 is not a valid private key. Re-copy the .p8 (cat AuthKey_XXXX.p8 | pbcopy) and update the secret."
+            echo "Diagnostics (no secret content):"
+            echo "  base64 body length : ${#BODY}   (expect ~200 for an App Store Connect key)"
+            echo "  rebuilt line count : $(wc -l < "$KEY_PATH")"
+            exit 1
+          fi
+          echo "Private key parsed OK: $(openssl pkey -in "$KEY_PATH" -noout -text 2>/dev/null | head -1)"
           echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
 
       # Cloud signing: -allowProvisioningUpdates plus the API key lets Xcode create
