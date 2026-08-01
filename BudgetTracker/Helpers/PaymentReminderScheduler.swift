@@ -54,8 +54,11 @@ enum PaymentReminderScheduler {
     /// Cancel reminders for a single card (e.g. on delete).
     static func cancel(cardID: UUID) {
         let center = UNUserNotificationCenter.current()
-        var ids = [dayID(cardID)]
-        for offset in 0..<leadMonthsAhead { ids.append(leadID(cardID, offset: offset)) }
+        var ids: [String] = []
+        for offset in 0..<leadMonthsAhead {
+            ids.append(leadID(cardID, offset: offset))
+            ids.append(dayID(cardID, offset: offset))
+        }
         center.removePendingNotificationRequests(withIdentifiers: ids)
     }
 
@@ -67,73 +70,67 @@ enum PaymentReminderScheduler {
     private static let leadMonthsAhead = 6
 
     private static func leadID(_ id: UUID, offset: Int) -> String { "\(prefix)\(id.uuidString).lead.\(offset)" }
-    private static func dayID(_ id: UUID) -> String { "\(prefix)\(id.uuidString).day" }
+    private static func dayID(_ id: UUID, offset: Int) -> String { "\(prefix)\(id.uuidString).day.\(offset)" }
 
     private static func scheduleReminders(for card: CreditCardAccount,
                                           center: UNUserNotificationCenter) {
-        let cal = DateHelpers.calendar
-        let dueDay = min(max(card.paymentDueDay, 1), 28)
+        let now = Date()
 
-        // Day-of reminder: a single repeating monthly trigger is safe here
-        // since dueDay is always a valid day-of-month (1...28).
-        add(id: dayID(card.id),
-            title: "Card payment due today",
-            body: "\(card.displayName) payment is due today.",
-            day: dueDay, hour: 9, cal: cal, center: center)
-
-        // Lead reminder: a single repeating "day N of every month" trigger
-        // cannot correctly represent "leadDays before the due day" — when
-        // leadDays >= dueDay, that lands in the *previous* month on a day
-        // that varies with month length (e.g. 3 days before the 2nd is the
-        // 27th-30th of the month before, not a fixed day-of-month). Schedule
-        // concrete one-off dates for the next several months instead, each
-        // computed with real calendar arithmetic off that month's actual due date.
-        guard leadDays > 0 else { return }
+        // Both reminders are scheduled as concrete one-off dates, one per month.
+        //
+        // A repeating "day N of every month" trigger cannot express either of them.
+        // For the day-of reminder it silently never fires in months that lack that
+        // day — a card due on the 31st would go unremembered in February, April,
+        // June, September and November. For the lead reminder it is wrong whenever
+        // leadDays >= dueDay, since "3 days before the 2nd" is a varying day of the
+        // *previous* month.
+        //
+        // `card.nextDueDate` already clamps the due day to each month's real length,
+        // so a 31st cycle lands on the 28th/29th in February instead of vanishing.
         let body = leadDays == 1
             ? "\(card.displayName) payment is due tomorrow."
             : "\(card.displayName) payment is due in \(leadDays) days."
-        let now = Date()
 
+        let cal = DateHelpers.calendar
         for offset in 0..<leadMonthsAhead {
-            guard let monthDate = cal.date(byAdding: .month, value: offset, to: now) else { continue }
-            var dueComps = cal.dateComponents([.year, .month], from: monthDate)
-            let daysInMonth = cal.range(of: .day, in: .month, for: monthDate)?.count ?? dueDay
-            dueComps.day = min(dueDay, daysInMonth)
-            dueComps.hour = 9
-            guard let dueDate = cal.date(from: dueComps),
+            guard let monthAnchor = cal.date(byAdding: .month, value: offset, to: now),
+                  let dueDate = card.nextDueDate(asOf: cal.startOfDay(for: monthAnchor))
+            else { continue }
+
+            if dueDate > now {
+                schedule(id: dayID(card.id, offset: offset),
+                         title: "Card payment due today",
+                         body: "\(card.displayName) payment is due today.",
+                         at: dueDate, cal: cal, center: center)
+            }
+
+            guard leadDays > 0,
                   let leadDate = cal.date(byAdding: .day, value: -leadDays, to: dueDate),
                   leadDate > now
             else { continue }
 
-            var fireComps = cal.dateComponents([.year, .month, .day, .hour], from: leadDate)
-            fireComps.timeZone = cal.timeZone
-            let trigger = UNCalendarNotificationTrigger(dateMatching: fireComps, repeats: false)
-            let content = UNMutableNotificationContent()
-            content.title = "Card payment due soon"
-            content.body = body
-            content.sound = .default
-            let request = UNNotificationRequest(identifier: leadID(card.id, offset: offset),
-                                                 content: content, trigger: trigger)
-            center.add(request, withCompletionHandler: nil)
+            schedule(id: leadID(card.id, offset: offset),
+                     title: "Card payment due soon",
+                     body: body,
+                     at: leadDate, cal: cal, center: center)
         }
     }
 
-    private static func add(id: String, title: String, body: String,
-                            day: Int, hour: Int,
-                            cal: Calendar, center: UNUserNotificationCenter) {
-        var comps = DateComponents()
-        comps.day = day
-        comps.hour = hour
-        comps.timeZone = cal.timeZone   // Asia/Singapore
-        // No year/month → repeats monthly on that day.
-        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
+    /// Schedule a one-off notification at a concrete date.
+    private static func schedule(id: String, title: String, body: String,
+                                 at date: Date, cal: Calendar,
+                                 center: UNUserNotificationCenter) {
+        var comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        comps.timeZone = cal.timeZone
+        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
 
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
 
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-        center.add(request, withCompletionHandler: nil)
+        center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger),
+                   withCompletionHandler: nil)
     }
+
 }

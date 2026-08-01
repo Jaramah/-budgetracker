@@ -10,7 +10,8 @@ final class Bill {
     var id: UUID
     var name: String
     var amountCents: Int
-    /// Day of month the bill is due (1...28).
+    /// Day of month the bill is due (1...31), clamped to the month's real length
+    /// wherever an actual date is derived.
     var dueDay: Int
     /// Raw `Recurrence` value.
     var recurrenceRaw: String
@@ -35,7 +36,7 @@ final class Bill {
         self.id = id
         self.name = name
         self.amountCents = abs(amountCents)
-        self.dueDay = min(max(dueDay, 1), 28)
+        self.dueDay = min(max(dueDay, 1), 31)
         self.recurrenceRaw = recurrence.rawValue
         self.category = category
         self.lastPaidMonth = lastPaidMonth

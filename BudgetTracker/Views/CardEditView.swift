@@ -33,13 +33,13 @@ struct CardEditView: View {
                 }
                 Section {
                     Picker("Statement day", selection: $statementDay) {
-                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                        ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
                     }
                     Picker("Payment due day", selection: $paymentDueDay) {
-                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                        ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
                     }
                 } header: { Text("Billing cycle") } footer: {
-                    Text("Day of the month the statement is cut and payment is due. Used to route statements and remind you before the due date.")
+                    Text("Day of the month the statement is cut and payment is due. Used to route statements and remind you before the due date. Days 29–31 fall back to the last day of any shorter month.")
                 }
                 Section("Optional") {
                     TextField("Credit limit", text: $creditLimitText).keyboardType(.decimalPad)

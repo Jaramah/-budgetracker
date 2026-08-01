@@ -18,9 +18,11 @@ final class CreditCardAccount {
     var nickname: String
     /// Last 4 digits (optional, for disambiguating two cards from the same bank).
     var last4: String
-    /// Day of month the statement is generated (1...28). 0 = not set.
+    /// Day of month the statement is generated (1...31). 0 = not set.
+    /// Days beyond a given month's length are clamped when a real date is built,
+    /// so a 31st cycle lands on the 28th/29th in February rather than vanishing.
     var statementDay: Int
-    /// Day of month payment is due (1...28). 0 = not set.
+    /// Day of month payment is due (1...31). 0 = not set. Clamped per month, as above.
     var paymentDueDay: Int
     /// Optional credit limit in cents. 0 = not set.
     var creditLimitCents: Int
@@ -72,8 +74,8 @@ final class CreditCardAccount {
         Color(hex: colorHex.isEmpty ? bank.tintHex : colorHex)
     }
 
-    var hasDueDay: Bool { (1...28).contains(paymentDueDay) }
-    var hasStatementDay: Bool { (1...28).contains(statementDay) }
+    var hasDueDay: Bool { (1...31).contains(paymentDueDay) }
+    var hasStatementDay: Bool { (1...31).contains(statementDay) }
 
     // MARK: - Due dates
     //

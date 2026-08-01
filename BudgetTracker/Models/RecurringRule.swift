@@ -22,7 +22,8 @@ final class RecurringRule {
     var cardID: UUID?
     /// Raw `Cadence` value.
     var cadenceRaw: String
-    /// For monthly/yearly: day of month (1...28). For weekly: 1=Sun ... 7=Sat.
+    /// For monthly/yearly: day of month (1...31), clamped per month by
+    /// `clampedDay`. For weekly: 1=Sun ... 7=Sat.
     var anchorDay: Int
     /// First date the rule is active from.
     var startDate: Date

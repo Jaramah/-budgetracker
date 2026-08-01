@@ -84,6 +84,69 @@ final class DueDateTests: XCTestCase {
                       "28 Feb exists in a non-leap year and must be used as-is")
     }
 
+    // MARK: Days 29–31
+    //
+    // The pickers used to stop at 28, so a card genuinely due on the 30th or 31st
+    // could not be entered at all. Allowing them requires every derived date to be
+    // clamped to the month's real length rather than the day being dropped.
+
+    func testDueDaysUpToThirtyOneAreAccepted() {
+        for d in 1...31 {
+            XCTAssertTrue(card(statementDay: 1, dueDay: d).hasDueDay, "due day \(d) rejected")
+        }
+        XCTAssertFalse(card(statementDay: 1, dueDay: 0).hasDueDay)
+        XCTAssertFalse(card(statementDay: 1, dueDay: 32).hasDueDay)
+    }
+
+    /// A 31st due day in a 30-day month lands on the 30th, not the 1st of the next.
+    func testDayThirtyOneClampsToThirtyDayMonth() {
+        let c = card(statementDay: 5, dueDay: 31)
+        assertSameDay(c.dueDate(forStatementDate: date(2026, 4, 5)),
+                      date(2026, 4, 30),
+                      "31st due day in April must clamp to the 30th")
+    }
+
+    func testDayThirtyOneClampsInFebruary() {
+        let c = card(statementDay: 5, dueDay: 31)
+        assertSameDay(c.dueDate(forStatementDate: date(2027, 2, 5)),
+                      date(2027, 2, 28),
+                      "non-leap February clamps to the 28th")
+        assertSameDay(c.dueDate(forStatementDate: date(2028, 2, 5)),
+                      date(2028, 2, 29),
+                      "leap February clamps to the 29th, not the 28th")
+    }
+
+    /// The screenshot case: a DBS card due on the 30th.
+    func testDayThirtyIsHonouredInLongMonths() {
+        let c = card(statementDay: 5, dueDay: 30)
+        assertSameDay(c.dueDate(forStatementDate: date(2026, 7, 5)),
+                      date(2026, 7, 30),
+                      "July has a 30th — no clamping should occur")
+    }
+
+    /// Clamping must not make the due date collapse onto or before the statement
+    /// date, which would resolve it into the wrong cycle.
+    func testClampedDueDateStillFollowsTheStatement() {
+        let c = card(statementDay: 28, dueDay: 31)
+        guard let due = c.dueDate(forStatementDate: date(2027, 2, 28)) else {
+            return XCTFail("expected a due date")
+        }
+        XCTAssertGreaterThan(due, date(2027, 2, 28),
+                             "clamping to 28 Feb must roll to March, not equal the statement date")
+        assertSameDay(due, date(2027, 3, 31), "next month's 31st")
+    }
+
+    /// Every day/month combination must produce a date, with no gaps.
+    func testEveryDueDayResolvesInEveryMonth() {
+        for dueDay in 28...31 {
+            let c = card(statementDay: 1, dueDay: dueDay)
+            for month in 1...12 {
+                XCTAssertNotNil(c.dueDate(forStatementDate: date(2027, month, 1)),
+                                "no due date for day \(dueDay) in month \(month)")
+            }
+        }
+    }
+
     func testNoDueDayConfiguredReturnsNil() {
         let c = card(statementDay: 19, dueDay: 0)
         XCTAssertNil(c.dueDate(forStatementDate: date(2026, 7, 19)))

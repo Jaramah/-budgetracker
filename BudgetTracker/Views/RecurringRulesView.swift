@@ -172,7 +172,7 @@ struct RecurringEditView: View {
 
                     // Anchor day
                     fieldCard(title: cadence == .weekly ? "Day of week" : "Day of month") {
-                        Stepper(value: $anchorDay, in: cadence == .weekly ? 1...7 : 1...28) {
+                        Stepper(value: $anchorDay, in: cadence == .weekly ? 1...7 : 1...31) {
                             Text(anchorLabel).foregroundStyle(DS.inkPrimary)
                         }
                     }

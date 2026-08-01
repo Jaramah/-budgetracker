@@ -115,7 +115,7 @@ struct BillEditView: View {
                 }
                 Section("Schedule") {
                     Picker("Due day", selection: $dueDay) {
-                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                        ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
                     }
                     Picker("Repeats", selection: $recurrence) {
                         ForEach(Bill.Recurrence.allCases) { r in Text(r.label).tag(r) }
