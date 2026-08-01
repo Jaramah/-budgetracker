@@ -14,6 +14,31 @@ final class SubscriptionTests: XCTestCase {
         XCTAssertNil(SubscriptionDetector.matchKey(for: "1234 5678"))
     }
 
+    /// Processor-routed charges print the gateway first, so keying on the leading
+    /// token grouped every PayPal subscription under "paypal" and matched none of
+    /// them to their real brand.
+    func testMatchKeySkipsPaymentProcessorPrefixes() {
+        XCTAssertEqual(SubscriptionDetector.matchKey(for: "PAYPAL *SPOTIFY"), "spotify")
+        XCTAssertEqual(SubscriptionDetector.matchKey(for: "PAYPAL*NETFLIX"), "netflix")
+        XCTAssertEqual(SubscriptionDetector.matchKey(for: "SQ * MUBI LONDON"), "mubi")
+        XCTAssertEqual(SubscriptionDetector.matchKey(for: "GOOGLE *YouTube Premium"), "youtube")
+        XCTAssertEqual(SubscriptionDetector.matchKey(for: "STRIPE *NOTION LABS"), "notion")
+    }
+
+    /// The prefix rule needs the gateway's `*`. A merchant that merely begins with
+    /// one of those words must be left alone.
+    func testProcessorStrippingRequiresTheGatewayMarker() {
+        XCTAssertEqual(SubscriptionDetector.matchKey(for: "GOOGLE ONE"), "google")
+        XCTAssertEqual(SubscriptionDetector.matchKey(for: "AMAZON PRIME VIDEO"), "amazon")
+        XCTAssertEqual(SubscriptionDetector.strippingProcessorPrefix("SQUARE ENIX"), "SQUARE ENIX")
+    }
+
+    /// A processor prefix with nothing after it must not erase the description.
+    func testProcessorStrippingKeepsSomethingUsable() {
+        XCTAssertEqual(SubscriptionDetector.strippingProcessorPrefix("PAYPAL *"), "PAYPAL *")
+        XCTAssertNotNil(SubscriptionDetector.matchKey(for: "PAYPAL *"))
+    }
+
     // MARK: detection
 
     func testKnownBrandDetectedFromSingleCharge() throws {

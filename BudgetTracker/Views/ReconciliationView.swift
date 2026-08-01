@@ -14,6 +14,8 @@ struct ReconciliationView: View {
     @Bindable var statement: StatementImport
 
     @Query private var allTransactions: [Transaction]
+    @Query private var subscriptions: [Subscription]
+    @State private var subscriptionNotice: String?
 
     /// Logged credit-card expenses (candidates for matching).
     private var creditTransactions: [Transaction] {
@@ -71,6 +73,11 @@ struct ReconciliationView: View {
             }
         }
         .navigationTitle("Reconcile")
+        .alert("Subscriptions", isPresented: Binding(
+            get: { subscriptionNotice != nil },
+            set: { if !$0 { subscriptionNotice = nil } })) {
+            Button("OK", role: .cancel) { subscriptionNotice = nil }
+        } message: { Text(subscriptionNotice ?? "") }
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -120,12 +127,28 @@ struct ReconciliationView: View {
             .sorted { abs($0.date.timeIntervalSince(line.date)) < abs($1.date.timeIntervalSince(line.date)) }
         let suggestions = inWindow + outWindow
 
+        let alreadyTracked = SubscriptionDetector.matchKey(for: line.desc)
+            .map { key in subscriptions.contains { $0.matchKey == key } } ?? false
+
         return Menu {
             if let matchedTx {
                 Button(role: .destructive) {
                     unmatch(line, tx: matchedTx)
                 } label: {
                     Label("Unmatch", systemImage: "xmark.circle")
+                }
+            }
+            // Detection will always miss things — PlayStation and other one-off-looking
+            // charges need two months of history before the pattern rules fire. A
+            // one-tap manual path is worth more than any additional heuristic, and it
+            // doubles as the signal that teaches future imports.
+            if alreadyTracked {
+                Label("Already tracked as a subscription", systemImage: "checkmark.circle")
+            } else {
+                Button {
+                    trackAsSubscription(line, matchedTx: matchedTx)
+                } label: {
+                    Label("Track as subscription", systemImage: "repeat")
                 }
             }
             if suggestions.isEmpty {
@@ -168,5 +191,44 @@ struct ReconciliationView: View {
         line.matchedTransactionID = nil
         tx.isReconciled = false
         try? context.save()
+    }
+
+    /// Promote a statement charge to a tracked subscription.
+    ///
+    /// Confirmed rather than suggested: the user picked it deliberately, so it should
+    /// not land back in the "is this a subscription?" queue. Monthly is the default
+    /// cycle — a single charge carries no interval, and monthly is right far more
+    /// often than not; it stays editable in the subscription editor.
+    private func trackAsSubscription(_ line: StatementLine, matchedTx: Transaction?) {
+        guard let key = SubscriptionDetector.matchKey(for: line.desc) else {
+            subscriptionNotice = "Couldn't read a merchant name from this row."
+            return
+        }
+        guard !subscriptions.contains(where: { $0.matchKey == key }) else {
+            subscriptionNotice = "That merchant is already tracked."
+            return
+        }
+        let name = SubscriptionDetector.knownBrands[key]
+            ?? SubscriptionDetector.strippingProcessorPrefix(line.desc)
+                .split(separator: " ").prefix(3).joined(separator: " ").capitalized
+
+        let sub = Subscription(
+            name: name.isEmpty ? key.capitalized : name,
+            matchKey: key,
+            amountCents: line.amountCents,
+            cycle: .monthly,
+            anchorDate: line.date,
+            cardID: statement.cardID,
+            category: matchedTx?.category,
+            status: .active,
+            createdManually: true
+        )
+        context.insert(sub)
+        try? context.save()
+        Haptics.success()
+        subscriptionNotice = "\(sub.name) is now tracked as a subscription."
+
+        let subs = (try? context.fetch(FetchDescriptor<Subscription>())) ?? []
+        SubscriptionReminderScheduler.reschedule(subscriptions: subs)
     }
 }

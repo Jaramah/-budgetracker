@@ -41,13 +41,43 @@ enum SubscriptionDetector {
 
     /// Normalised, stable merchant token — the first meaningful word, lowercased.
     /// e.g. "SPOTIFY P42A314ACB STOCKHOLM SE" → "spotify", "NETFLIX.COM" → "netflix".
+    ///
+    /// Payment processors are stripped first. A charge routed through PayPal reads
+    /// "PAYPAL *SPOTIFY", and taking the leading token would key it as "paypal" —
+    /// collapsing every processor-routed subscription into one bogus group and
+    /// matching none of them to their real brand.
     static func matchKey(for note: String) -> String? {
-        let tokens = note.lowercased().split { !$0.isLetter }.map(String.init)
+        let cleaned = strippingProcessorPrefix(note)
+        let tokens = cleaned.lowercased().split { !$0.isLetter }.map(String.init)
         for t in tokens where t.count >= 2 && !noiseTokens.contains(t) {
             return t
         }
         return nil
     }
+
+    /// Drop a leading "PAYPAL *", "SQ *", "GOOGLE *" style processor prefix.
+    ///
+    /// Only fires when a known processor is followed by the `*` these gateways use,
+    /// so an ordinary merchant whose name starts with one of these words is left
+    /// alone. Returns the original string when nothing matches.
+    static func strippingProcessorPrefix(_ note: String) -> String {
+        let lower = note.lowercased()
+        for p in processorPrefixes {
+            // "paypal *spotify", "paypal*spotify", "sq * merchant"
+            guard let r = lower.range(of: #"^\#(p)\s*\*+\s*"#, options: .regularExpression) else { continue }
+            let remainder = String(note[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+            return remainder.isEmpty ? note : remainder
+        }
+        return note
+    }
+
+    /// Gateways that prefix the real merchant name. `google` and `amzn` are here
+    /// because "GOOGLE *YouTube Premium" is a YouTube charge, not a Google one.
+    private static let processorPrefixes = [
+        "paypal", "pp", "sq", "sqc", "stripe", "tst", "toast", "google", "goog",
+        "amzn", "amazon", "shopify", "gumroad", "fs", "fastspring", "chargebee",
+        "paddle", "2co", "recurly", "braintree", "adyen", "wise", "revolut"
+    ]
 
     // MARK: Heuristics
 
