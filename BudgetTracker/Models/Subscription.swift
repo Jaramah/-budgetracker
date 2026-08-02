@@ -77,9 +77,11 @@ final class Subscription {
     /// Cost normalised to a monthly figure, so totals mix cycles correctly.
     var monthlyEquivalentCents: Int {
         switch cycle {
-        case .weekly:  return (amountCents * 52) / 12
-        case .monthly: return amountCents
-        case .yearly:  return amountCents / 12
+        case .weekly:     return (amountCents * 52) / 12
+        case .monthly:    return amountCents
+        case .quarterly:  return amountCents / 3
+        case .halfYearly: return amountCents / 6
+        case .yearly:     return amountCents / 12
         }
     }
 
@@ -91,9 +93,11 @@ final class Subscription {
         var guardCount = 0
         let (comp, step): (Calendar.Component, Int) = {
             switch cycle {
-            case .weekly:  return (.day, 7)
-            case .monthly: return (.month, 1)
-            case .yearly:  return (.year, 1)
+            case .weekly:     return (.day, 7)
+            case .monthly:    return (.month, 1)
+            case .quarterly:  return (.month, 3)
+            case .halfYearly: return (.month, 6)
+            case .yearly:     return (.year, 1)
             }
         }()
         while d < today && guardCount < 600 {
@@ -104,21 +108,25 @@ final class Subscription {
     }
 
     enum Cycle: String, CaseIterable, Identifiable, Codable {
-        case weekly, monthly, yearly
+        case weekly, monthly, quarterly, halfYearly, yearly
         var id: String { rawValue }
         var label: String {
             switch self {
-            case .weekly:  return "Weekly"
-            case .monthly: return "Monthly"
-            case .yearly:  return "Yearly"
+            case .weekly:     return "Weekly"
+            case .monthly:    return "Monthly"
+            case .quarterly:  return "Quarterly"
+            case .halfYearly: return "Half-yearly"
+            case .yearly:     return "Yearly"
             }
         }
         /// Short "/mo", "/yr" style suffix.
         var perLabel: String {
             switch self {
-            case .weekly:  return "/wk"
-            case .monthly: return "/mo"
-            case .yearly:  return "/yr"
+            case .weekly:     return "/wk"
+            case .monthly:    return "/mo"
+            case .quarterly:  return "/qtr"
+            case .halfYearly: return "/6mo"
+            case .yearly:     return "/yr"
             }
         }
     }

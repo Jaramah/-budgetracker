@@ -80,9 +80,11 @@ enum SubscriptionReminderScheduler {
 
     private static func advance(_ date: Date, cycle: Subscription.Cycle, cal: Calendar) -> Date {
         switch cycle {
-        case .weekly:  return cal.date(byAdding: .day, value: 7, to: date) ?? date
-        case .monthly: return cal.date(byAdding: .month, value: 1, to: date) ?? date
-        case .yearly:  return cal.date(byAdding: .year, value: 1, to: date) ?? date
+        case .weekly:     return cal.date(byAdding: .day, value: 7, to: date) ?? date
+        case .monthly:    return cal.date(byAdding: .month, value: 1, to: date) ?? date
+        case .quarterly:  return cal.date(byAdding: .month, value: 3, to: date) ?? date
+        case .halfYearly: return cal.date(byAdding: .month, value: 6, to: date) ?? date
+        case .yearly:     return cal.date(byAdding: .year, value: 1, to: date) ?? date
         }
     }
 
