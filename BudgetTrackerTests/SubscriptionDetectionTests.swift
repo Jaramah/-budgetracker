@@ -19,14 +19,14 @@ final class SubscriptionDetectionTests: XCTestCase {
         return cal.date(from: c)!
     }
 
-    private func tx(_ note: String, _ cents: Int, _ d: Date, category: Category? = nil) -> Transaction {
+    private func tx(_ note: String, _ cents: Int, _ d: Date, category: BudgetTracker.Category? = nil) -> Transaction {
         Transaction(amountCents: cents, isExpense: true, note: note, date: d,
                     category: category, paymentMethod: .credit)
     }
 
     /// An in-memory container so `refresh` can insert without touching the real store.
     private func makeContext() throws -> ModelContext {
-        let schema = Schema([Category.self, Transaction.self, Subscription.self,
+        let schema = Schema([BudgetTracker.Category.self, Transaction.self, Subscription.self,
                              CreditCardAccount.self, StatementImport.self, StatementLine.self,
                              RecurringRule.self, Goal.self, Bill.self])
         let container = try ModelContainer(
@@ -73,7 +73,7 @@ final class SubscriptionDetectionTests: XCTestCase {
     /// Category is the second guard, for merchants not on the keyword list.
     func testTransportCategoryIsNeverASubscription() throws {
         let ctx = try makeContext()
-        let transport = Category(name: "Transport")
+        let transport = BudgetTracker.Category(name: "Transport")
         ctx.insert(transport)
         let txs = [
             tx("SOMECAB CO", 2500, date(2026, 5, 10), category: transport),
