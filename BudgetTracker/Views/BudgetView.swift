@@ -54,31 +54,67 @@ struct BudgetView: View {
                     ProgressBar(value: budgetCents > 0 ? Double(spentCents)/Double(budgetCents) : 0)
                 }
             }
+            // Each card opens the transactions behind its total. Without this the
+            // month's spend was only ever a figure — there was no way to see which
+            // charges produced it, or to check one that looked wrong.
             ForEach(categories) { cat in
                 let s = spent(for: cat)
                 let b = cat.monthlyBudgetCents
                 let pct = b > 0 ? Double(s)/Double(b) : 0
-                AuroraCard {
-                    VStack(spacing: 8) {
-                        HStack(spacing: 10) {
-                            IconChip(symbol: cat.symbol, tint: cat.color, size: 36)
-                            Text(cat.name).font(.subheadline.weight(.medium))
-                                .foregroundStyle(DS.inkPrimary)
-                            Spacer()
-                            Text(b > 0 ? "\(Int(pct*100))%" : "—")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(pct > 1 ? DS.moneyOut : DS.inkSecondary)
-                        }
-                        ProgressBar(value: pct, tint: pct > 1 ? DS.moneyOut : cat.color)
-                        HStack {
-                            Text("\(Money.string(s)) spent")
-                                .font(.caption).foregroundStyle(DS.inkTertiary)
-                            Spacer()
-                            Text(b > 0 ? "\(Money.string(b)) budget" : "no budget")
-                                .font(.caption).foregroundStyle(DS.inkTertiary)
+                NavigationLink {
+                    CategoryMonthView(category: cat, month: month)
+                } label: {
+                    AuroraCard {
+                        VStack(spacing: 8) {
+                            HStack(spacing: 10) {
+                                IconChip(symbol: cat.symbol, tint: cat.color, size: 36)
+                                Text(cat.name).font(.subheadline.weight(.medium))
+                                    .foregroundStyle(DS.inkPrimary)
+                                Spacer()
+                                Text(b > 0 ? "\(Int(pct*100))%" : "—")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(pct > 1 ? DS.moneyOut : DS.inkSecondary)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(DS.inkTertiary)
+                            }
+                            ProgressBar(value: pct, tint: pct > 1 ? DS.moneyOut : cat.color)
+                            HStack {
+                                Text("\(Money.string(s)) spent")
+                                    .font(.caption).foregroundStyle(DS.inkTertiary)
+                                Spacer()
+                                Text(b > 0 ? "\(Money.string(b)) budget" : "no budget")
+                                    .font(.caption).foregroundStyle(DS.inkTertiary)
+                            }
                         }
                     }
                 }
+                .buttonStyle(.plain)
+            }
+
+            // Spending with no category belongs to none of the cards above, so it
+            // was invisible here even though it counts toward the month's total.
+            if uncategorizedCents > 0 {
+                NavigationLink {
+                    CategoryMonthView(category: nil, month: month)
+                } label: {
+                    AuroraCard {
+                        HStack(spacing: 10) {
+                            IconChip(symbol: "questionmark.circle", tint: DS.inkTertiary, size: 36)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Uncategorized").font(.subheadline.weight(.medium))
+                                    .foregroundStyle(DS.inkPrimary)
+                                Text("\(Money.string(uncategorizedCents)) spent")
+                                    .font(.caption).foregroundStyle(DS.inkTertiary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(DS.inkTertiary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -139,12 +175,24 @@ struct BudgetView: View {
                                       centerBottom: Money.string(spentCents))
                             .frame(width: 120, height: 120)
                         VStack(spacing: 8) {
+                            // Same drill-in as the Categories tab — a slice of the
+                            // donut is no more useful than a total if you can't open it.
                             ForEach(byCategory.prefix(5), id: \.cat.id) { it in
-                                legendRow(color: it.color, name: it.cat.name, cents: it.cents)
+                                NavigationLink {
+                                    CategoryMonthView(category: it.cat, month: month)
+                                } label: {
+                                    legendRow(color: it.color, name: it.cat.name, cents: it.cents)
+                                }
+                                .buttonStyle(.plain)
                             }
                             if uncategorizedCents > 0 {
-                                legendRow(color: DS.inkTertiary.opacity(0.5),
-                                          name: "Uncategorized", cents: uncategorizedCents)
+                                NavigationLink {
+                                    CategoryMonthView(category: nil, month: month)
+                                } label: {
+                                    legendRow(color: DS.inkTertiary.opacity(0.5),
+                                              name: "Uncategorized", cents: uncategorizedCents)
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
                     }
