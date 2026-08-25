@@ -44,6 +44,14 @@ struct StatementReviewView: View {
         lines.filter { $0.amountCents < 0 }.reduce(0) { $0 + abs($1.amountCents) }
     }
     private var lowConfidenceCount: Int { lines.filter { $0.lowConfidence }.count }
+    /// Money received via PayNow / FAST. Counted apart from card payments because
+    /// it is income the app will log, not a credit that merely offsets the bill.
+    private var receivedLines: [StatementParser.ParsedLine] {
+        lines.filter { $0.isTransferIn && $0.amountCents < 0 }
+    }
+    private var receivedTotalCents: Int {
+        receivedLines.reduce(0) { $0 + abs($1.amountCents) }
+    }
 
     /// Whether the parsed charges add up to the total the bank printed.
     ///
@@ -134,6 +142,11 @@ struct StatementReviewView: View {
                     LabeledContent("Rows parsed", value: "\(lines.count)")
                     LabeledContent("Charges", value: Money.string(chargeTotalCents))
                     LabeledContent("Payments / credits", value: Money.string(creditTotalCents))
+                    if !receivedLines.isEmpty {
+                        LabeledContent("Received (PayNow)", value: Money.string(receivedTotalCents))
+                        Text("\(receivedLines.count) transfer\(receivedLines.count == 1 ? "" : "s") in — saved as income, not spending.")
+                            .font(.caption).foregroundStyle(DS.inkTertiary)
+                    }
                     reconciliationRow
                     if lowConfidenceCount > 0 {
                         Label("\(lowConfidenceCount) row(s) need a quick check",
@@ -274,6 +287,26 @@ struct StatementReviewView: View {
             sl.foreignAmountCents = line.foreignAmountCents
             sl.statement = statement
             context.insert(sl)
+
+            // Money received via PayNow is income, so it is logged rather than
+            // matched: there is no earlier credit-card expense for it to reconcile
+            // against. Matching below only applies to charges.
+            if autoAdd, line.isTransferIn, line.amountCents < 0 {
+                let income = Transaction(
+                    amountCents: abs(line.amountCents),
+                    isExpense: false,
+                    note: line.desc,
+                    date: line.date,
+                    category: line.categoryID.flatMap { cid in categories.first { $0.id == cid } },
+                    paymentMethod: .cash,
+                    isReconciled: true,
+                    createdFromStatement: true,
+                    cardID: selectedCardID
+                )
+                context.insert(income)
+                sl.matchedTransactionID = income.id
+                continue
+            }
 
             guard autoAdd, line.amountCents > 0 else { continue }
 

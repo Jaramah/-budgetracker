@@ -394,16 +394,34 @@ enum LineStatementParser {
         }
         if trailingCredit { isCredit = true }
         
-        // SKIP credits entirely — we only want debits (charges/expenses)
-        guard !isCredit else { return .ignore }
+        let rawDesc = tokens[consumed..<ai].joined(separator: " ")
+        let transfer = StatementParser.payNow(in: rawDesc)
 
-        guard let desc = cleanedDescription(tokens[consumed..<ai].joined(separator: " ")) else { return .ignore }
+        // Credits are dropped, with one exception. On a card statement a credit is
+        // the user paying their bill — not income — which is why the blanket skip
+        // exists. But money RECEIVED via PayNow on a bank statement is real income,
+        // and dropping it silently loses half of what a bank statement contains.
+        //
+        // The exception is deliberately narrow: the row must both be recognised as
+        // a PayNow/FAST transfer AND say the money came in ("from", "incoming").
+        // A bare "PAYNOW PAYMENT" credit stays excluded, because on a card
+        // statement that is the bill being settled.
+        let isIncomingTransfer = isCredit && (transfer?.isIncoming ?? false)
+        guard !isCredit || isIncomingTransfer else { return .ignore }
+
+        guard var desc = cleanedDescription(rawDesc) else { return .ignore }
+        if let transfer { desc = transfer.cleanedDescription }
 
         // Flag rather than silently defaulting to today's date if it won't parse.
         let parsedDate = StatementParser.parseDate(firstDate)
         let date = parsedDate ?? Date()
+        // Received money keeps the negative sign the rest of the app uses for
+        // credits; `isTransferIn` is what separates it from a bill payment.
         return .transaction(StatementParser.ParsedLine(
-            date: date, desc: desc, amountCents: value, lowConfidence: parsedDate == nil))  // Always positive (debit)
+            date: date, desc: desc,
+            amountCents: isIncomingTransfer ? -value : value,
+            lowConfidence: parsedDate == nil,
+            isTransferIn: isIncomingTransfer))
     }
 
     private static func parseAmount(_ token: String) -> (Int, Bool)? {

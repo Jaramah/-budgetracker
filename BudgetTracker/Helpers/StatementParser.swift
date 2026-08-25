@@ -29,6 +29,14 @@ enum StatementParser {
         var foreignCurrency: String? = nil
         /// The original amount in minor units of `foreignCurrency`.
         var foreignAmountCents: Int? = nil
+        /// Money RECEIVED via PayNow / FAST rather than spent.
+        ///
+        /// Credits are otherwise dropped, and rightly so: on a card statement a
+        /// credit is the user paying their bill, which is not income. A PayNow
+        /// credit on a bank statement is real money in, so it needs to survive and
+        /// be saved as income rather than as spending. `amountCents` stays negative
+        /// for it, matching the existing credit convention.
+        var isTransferIn: Bool = false
     }
 
     enum ParseError: LocalizedError {
@@ -218,6 +226,94 @@ enum StatementParser {
             if let d = parseDate(String(s[r])) { return d }
         }
         return nil
+    }
+
+    // MARK: PayNow / bank transfers
+
+    /// A PayNow (or FAST) transfer recognised in a statement description.
+    struct PayNowInfo {
+        /// Money received rather than sent.
+        let isIncoming: Bool
+        /// The other party, when the statement names one.
+        let counterparty: String?
+        /// A readable description: "PayNow to John Tan", "PayNow from Mary Lim".
+        let cleanedDescription: String
+    }
+
+    /// Markers that identify a PayNow / FAST transfer row.
+    private static let payNowMarkers = [
+        "paynow", "pay now", "fast payment", "fast transfer", "funds transfer"
+    ]
+
+    /// Wording that means money came IN. Required before a credit is treated as
+    /// income: a bare "PAYNOW PAYMENT" credit on a *card* statement is the user
+    /// paying their bill, not money received, and must stay excluded.
+    private static let incomingMarkers = [
+        "from", "incoming", "received", "receipt", "credit from", "inward"
+    ]
+
+    /// Wording that means money went OUT.
+    private static let outgoingMarkers = ["to", "outgoing", "sent", "outward", "transfer to"]
+
+    /// Recognise a PayNow / FAST transfer and normalise its description.
+    ///
+    /// Returns `nil` for anything that isn't a transfer, so ordinary card charges
+    /// are untouched.
+    static func payNow(in desc: String) -> PayNowInfo? {
+        let low = desc.lowercased()
+        guard payNowMarkers.contains(where: { low.contains($0) }) else { return nil }
+
+        let incoming = incomingMarkers.contains { hasWord($0, in: low) }
+        let outgoing = outgoingMarkers.contains { hasWord($0, in: low) }
+        // When a row says neither, treat it as outgoing: an unqualified transfer on
+        // a statement is far more often money leaving, and the caller only trusts
+        // `isIncoming` for credits anyway.
+        let isIncoming = incoming && !outgoing
+
+        let party = counterparty(in: desc)
+        // Only rewrite the description when we actually learned something. A PayNow
+        // QR payment at a shop ("PAYNOW-QR PAYMENT NTUC FAIRPRICE") names no
+        // counterparty but does name the merchant, and replacing that with a
+        // generic "PayNow transfer" would throw away the useful half of the row.
+        let cleaned: String
+        if let party {
+            cleaned = isIncoming ? "PayNow from \(party)" : "PayNow to \(party)"
+        } else if isIncoming {
+            cleaned = "PayNow received"
+        } else {
+            cleaned = desc
+        }
+        return PayNowInfo(isIncoming: isIncoming, counterparty: party, cleanedDescription: cleaned)
+    }
+
+    /// Whole-word containment, so "to" doesn't match inside "total".
+    private static func hasWord(_ word: String, in haystack: String) -> Bool {
+        haystack.range(of: "\\b\(NSRegularExpression.escapedPattern(for: word))\\b",
+                       options: [.regularExpression]) != nil
+    }
+
+    /// The name after a to/from marker, with reference numbers and rail noise
+    /// stripped. Returns `nil` when the statement names nobody.
+    static func counterparty(in desc: String) -> String? {
+        let pattern = #"(?i)\b(?:to|from)\b[:\s]+(.+)$"#
+        guard let r = desc.range(of: pattern, options: .regularExpression) else { return nil }
+        var tail = String(desc[r])
+        // Drop the marker itself.
+        if let m = tail.range(of: #"(?i)^\b(?:to|from)\b[:\s]+"#, options: .regularExpression) {
+            tail.removeSubrange(m)
+        }
+        // Strip trailing reference numbers, rail names and long digit runs.
+        for pat in [#"(?i)\bref(?:erence)?\s*(?:no\.?)?[:\s]*\S+"#,
+                    #"(?i)\b(?:paynow|fast|giro|ibg|trf|transfer|txn|otr)\b"#,
+                    #"\b\d{6,}\b"#, #"[*#]+"#] {
+            tail = tail.replacingOccurrences(of: pat, with: " ", options: .regularExpression)
+        }
+        tail = tail
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: " -:,."))
+        // A name needs letters; "1234" or an empty tail names nobody.
+        guard tail.range(of: #"\p{L}{2,}"#, options: .regularExpression) != nil else { return nil }
+        return tail.count > 40 ? String(tail.prefix(40)).trimmingCharacters(in: .whitespaces) : tail
     }
 
     // MARK: Foreign currency
