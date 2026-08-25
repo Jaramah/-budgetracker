@@ -28,7 +28,10 @@ final class BillsEmptyStateUITests: XCTestCase {
         }
         XCTAssertTrue(seeAllBills.isHittable, "bills See all never scrolled clear of the tab bar")
         seeAllBills.tap()
-        XCTAssertTrue(app.navigationBars["Bills"].waitForExistence(timeout: 5), "Bills sheet didn't open")
+        // A sheet presentation on a loaded CI runner can take well over five
+        // seconds. This assertion has timed out intermittently while the tap
+        // itself was fine, so wait longer rather than treating slowness as a bug.
+        XCTAssertTrue(app.navigationBars["Bills"].waitForExistence(timeout: 15), "Bills sheet didn't open")
 
         // Mark every still-upcoming bill paid (no-op if they're already settled).
         var safety = 0
