@@ -26,6 +26,7 @@ struct SettingsView: View {
     @State private var showCurrencyPicker = false
     @State private var showCategories = false
     @State private var showRecurring = false
+    @State private var showSMSSetup = false
     @State private var showSubscriptions = false
     @State private var showShare = false
     @State private var shareURL: URL?
@@ -76,6 +77,7 @@ struct SettingsView: View {
         .sheet(isPresented: $showRecurring) {
             RecurringRulesView()
         }
+        .sheet(isPresented: $showSMSSetup) { SMSAutomationSetupView() }
         // Subscription tracker
         .sheet(isPresented: $showSubscriptions) {
             SubscriptionsView()
@@ -264,6 +266,9 @@ struct SettingsView: View {
             Divider().overlay(DS.hairline)
             SettingsRow(icon: "arrow.triangle.2.circlepath", tint: DS.moneyIn,
                         title: "Recurring rules", value: nil) { showRecurring = true }
+            Divider().overlay(DS.hairline)
+            SettingsRow(icon: "message.badge.filled.fill", tint: DS.warning,
+                        title: "Log bank alerts", value: nil) { showSMSSetup = true }
         }
     }
 

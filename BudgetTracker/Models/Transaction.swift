@@ -23,6 +23,13 @@ final class Transaction {
     /// True if auto-created from an imported statement (vs hand-keyed).
     var createdFromStatement: Bool = false
 
+    /// True if created from a bank alert SMS via a Shortcuts automation.
+    ///
+    /// Worth recording separately: SMS is an untrusted channel, so rows that
+    /// arrived unattended should be auditable as such rather than being
+    /// indistinguishable from ones the user typed.
+    var createdFromSMS: Bool = false
+
     /// The `CreditCardAccount.id` this transaction is attached to (nil = none/cash).
     var cardID: UUID? = nil
 

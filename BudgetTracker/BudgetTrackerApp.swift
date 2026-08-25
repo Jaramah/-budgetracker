@@ -3,46 +3,13 @@ import SwiftData
 
 @main
 struct BudgetTrackerApp: App {
-    let container: ModelContainer
+    /// Shared so App Intents (Shortcuts automations) write to the same store.
+    private let container = SharedModelContainer.shared
     @StateObject private var appState = AppState()
     @StateObject private var lock = AppLock()
     @StateObject private var store = ProStore()
     @StateObject private var theme = ThemeManager.shared
     @Environment(\.scenePhase) private var scenePhase
-
-    init() {
-        let schema = Schema([
-            Category.self,
-            Transaction.self,
-            StatementImport.self,
-            StatementLine.self,
-            CreditCardAccount.self,
-            RecurringRule.self,
-            Goal.self,
-            Bill.self,
-            Subscription.self
-        ])
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-        do {
-            container = try ModelContainer(for: schema, configurations: [config])
-        } catch {
-            // Self-heal: wipe an incompatible on-disk store rather than crashing.
-            BudgetTrackerApp.deleteStoreFiles()
-            do {
-                container = try ModelContainer(for: schema, configurations: [config])
-            } catch {
-                fatalError("Could not create ModelContainer even after reset: \(error)")
-            }
-        }
-    }
-
-    private static func deleteStoreFiles() {
-        let fm = FileManager.default
-        guard let dir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-        for name in ["default.store", "default.store-wal", "default.store-shm"] {
-            try? fm.removeItem(at: dir.appendingPathComponent(name))
-        }
-    }
 
     var body: some Scene {
         WindowGroup {
